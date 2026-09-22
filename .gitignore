@@ -1,0 +1,35 @@
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# UIProof AI Local Artifacts & Screenshots
+/backend/artifacts/
+/backend/recordings/
+/backend/storage/
+
+# Environment files
+.env
+frontend/.env
+backend/.env
