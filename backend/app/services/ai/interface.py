@@ -1,8 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from app.schemas.issue import Issue
 from app.schemas.evidence import BrowserEvidence
 from app.schemas.audit import DeveloperFixPrompt
+from app.schemas.ai import AIAnalysisDetails
+
+
+class AINotConfiguredError(Exception):
+    """Raised when the AI API Key or provider configuration is missing."""
+    pass
+
+
+class AIProviderError(Exception):
+    """Raised when an external LLM API request fails, times out, or returns invalid structure."""
+    pass
 
 
 class BaseLLMProvider(ABC):
@@ -21,15 +32,19 @@ class BaseLLMProvider(ABC):
         """Generate context-rich prompt for Antigravity, Cursor, Claude, or VS Code AI."""
         pass
 
+    @abstractmethod
+    async def analyze_issue(self, issue: Issue, evidence: Optional[BrowserEvidence] = None) -> AIAnalysisDetails:
+        """Analyze an already verified deterministic issue and return structured analysis."""
+        pass
+
 
 class StubLLMProvider(BaseLLMProvider):
     """
-    Milestone 1 AI Provider Stub.
-    Maintains typed interface contracts without making external API calls in milestone 1.
+    Stub AI Provider.
+    Raises AINotConfiguredError if real AI functionality is requested when API key is missing.
     """
 
     async def analyze_evidence(self, evidence: BrowserEvidence) -> List[Issue]:
-        # Milestone 1 returns issues derived purely from evidence schemas
         return []
 
     async def generate_fix_prompt(self, audit_id: str, issues: List[Issue]) -> DeveloperFixPrompt:
@@ -44,3 +59,6 @@ class StubLLMProvider(BaseLLMProvider):
             fix_prompt=prompt_text,
             suggested_files=[]
         )
+
+    async def analyze_issue(self, issue: Issue, evidence: Optional[BrowserEvidence] = None) -> AIAnalysisDetails:
+        raise AINotConfiguredError("AI API key is not configured. Please set LLM_API_KEY in environment.")

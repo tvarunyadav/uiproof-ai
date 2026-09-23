@@ -11,6 +11,8 @@ from app.schemas.audit import (
     AuditComparison,
     DeveloperFixPrompt,
 )
+from app.schemas.ai import IssueAnalysisResponse
+from app.services.ai.interface import AINotConfiguredError, AIProviderError
 from app.services.audit import audit_engine
 from app.utils.security import validate_and_sanitize_url
 
@@ -124,3 +126,29 @@ async def get_developer_fix_prompt(audit_id: str):
             detail=f"Audit with ID '{audit_id}' not found."
         )
     return await audit_engine.ai_provider.generate_fix_prompt(audit_id, audit.issues)
+
+
+@router.post("/{audit_id}/issues/{issue_id}/analyze", response_model=IssueAnalysisResponse, tags=["AI Analysis"])
+async def analyze_audit_issue(audit_id: str, issue_id: str):
+    """
+    Analyze an existing verified deterministic issue using the configured AI provider.
+    Returns structured AI diagnostics, likely causes, constraints, and fix prompts.
+    """
+    try:
+        return await audit_engine.analyze_issue(audit_id=audit_id, issue_id=issue_id)
+    except KeyError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err).strip("'\"")
+        )
+    except AINotConfiguredError as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "AI_NOT_CONFIGURED", "message": str(err)}
+        )
+    except AIProviderError as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "AI_PROVIDER_ERROR", "message": str(err)}
+        )
+

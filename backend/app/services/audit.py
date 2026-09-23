@@ -20,9 +20,12 @@ from app.schemas.issue import (
 )
 from app.services.browser.interface import BaseBrowserRunner
 from app.services.browser.playwright_runner import PlaywrightBrowserRunner
-from app.services.ai.interface import BaseLLMProvider, StubLLMProvider
+from app.services.ai.interface import BaseLLMProvider, StubLLMProvider, AINotConfiguredError, AIProviderError
+from app.services.ai.openai_provider import OpenAILLMProvider
+from app.schemas.ai import IssueAnalysisResponse, AIAnalysisDetails
 
 logger = logging.getLogger("uiproof.service")
+
 
 
 def create_deterministic_findings(evidence: BrowserEvidence) -> List[Issue]:
@@ -250,8 +253,32 @@ class AuditEngineService:
         ai_provider: Optional[BaseLLMProvider] = None,
     ):
         self.browser_runner = browser_runner or PlaywrightBrowserRunner()
-        self.ai_provider = ai_provider or StubLLMProvider()
+        self.ai_provider = ai_provider or OpenAILLMProvider()
         self._audits_db: Dict[str, AuditResult] = {}
+
+    async def analyze_issue(self, audit_id: str, issue_id: str) -> IssueAnalysisResponse:
+        audit = self.get_audit(audit_id)
+        if not audit:
+            raise KeyError(f"Audit with ID '{audit_id}' not found.")
+
+        all_issues = audit.issues if audit.issues else (audit.findings or [])
+        target_issue = next((i for i in all_issues if i.issue_id == issue_id), None)
+        if not target_issue:
+            raise KeyError(f"Issue with ID '{issue_id}' not found in audit '{audit_id}'.")
+
+        analysis_details = await self.ai_provider.analyze_issue(target_issue, audit.evidence)
+
+        # Enrich in-memory issue instance
+        causes_str = "\n".join(f"- {c}" for c in analysis_details.likely_causes) if analysis_details.likely_causes else "N/A"
+        target_issue.root_cause_analysis = f"{analysis_details.summary}\n\nLikely Causes:\n{causes_str}"
+        target_issue.recommended_fix = analysis_details.fix_prompt
+
+        return IssueAnalysisResponse(
+            audit_id=audit_id,
+            issue_id=issue_id,
+            issue=target_issue,
+            analysis=analysis_details
+        )
 
     async def create_audit(self, request: CreateAuditRequest) -> AuditResult:
         audit_id = str(uuid.uuid4())
