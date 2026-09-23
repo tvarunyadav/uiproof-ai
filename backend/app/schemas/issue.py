@@ -14,8 +14,12 @@ class IssueSeverity(str, Enum):
 
 class IssueCategory(str, Enum):
     LAYOUT = "layout"
+    RESPONSIVE = "responsive"
     CONSOLE_ERROR = "console_error"
+    CONSOLE = "console"
     NETWORK_FAILURE = "network_failure"
+    BROKEN_RESOURCE = "broken_resource"
+    SEO = "seo"
     ACCESSIBILITY = "accessibility"
     PERFORMANCE = "performance"
     INTERACTION = "interaction"
@@ -29,6 +33,20 @@ def generate_stable_issue_id(category: str, selector: str, title: str) -> str:
     normalized_str = f"{category.strip().lower()}|{selector.strip().lower()}|{title.strip().lower()}"
     hash_digest = hashlib.sha256(normalized_str.encode("utf-8")).hexdigest()[:12]
     return f"ISSUE-{category.upper()[:3]}-{hash_digest}"
+
+
+def generate_deterministic_issue_id(rule_code: str, viewport: str, target: str = "") -> str:
+    """
+    Generates a human-readable deterministic Issue ID formatted like:
+    UI-OVERFLOW-MOBILE or UI-BROKEN-IMAGE-DESKTOP-3A8B12
+    """
+    clean_rule = rule_code.strip().upper().replace(" ", "-")
+    clean_vp = viewport.strip().upper()
+    if target:
+        hash_digest = hashlib.sha256(f"{clean_rule}|{clean_vp}|{target.strip().lower()}".encode("utf-8")).hexdigest()[:6].upper()
+        return f"UI-{clean_rule}-{clean_vp}-{hash_digest}"
+    return f"UI-{clean_rule}-{clean_vp}"
+
 
 
 class Issue(BaseModel):

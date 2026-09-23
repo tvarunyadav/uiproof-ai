@@ -1,6 +1,10 @@
+import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
+
 from app.schemas.audit import (
     CreateAuditRequest,
     AuditResult,
@@ -8,8 +12,12 @@ from app.schemas.audit import (
     DeveloperFixPrompt,
 )
 from app.services.audit import audit_engine
+from app.utils.security import validate_and_sanitize_url
 
 router = APIRouter()
+
+# Path to backend/artifacts directory
+ARTIFACTS_BASE_DIR = Path(__file__).resolve().parents[4] / "artifacts"
 
 
 class AuditComparisonRequest(BaseModel):
@@ -21,14 +29,19 @@ class AuditComparisonRequest(BaseModel):
 async def create_audit(request: CreateAuditRequest):
     """
     Trigger a new web application quality assurance audit.
-    Collects evidence across viewports and analyzes findings into structured issues.
+    Executes Playwright Chromium, collects browser evidence across viewports, and produces structured issues.
     """
-    if not request.url.startswith(("http://", "https://")):
+    # Enforce URL scheme validation & SSRF protection
+    sanitized_url = validate_and_sanitize_url(request.url)
+    request.url = sanitized_url
+
+    result = await audit_engine.create_audit(request)
+    if result.status == "failed" and result.error_message:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="URL must begin with http:// or https://"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Audit execution failed: {result.error_message}"
         )
-    return await audit_engine.create_audit(request)
+    return result
 
 
 @router.get("/{audit_id}", response_model=AuditResult, tags=["Audits"])
@@ -41,6 +54,46 @@ async def get_audit(audit_id: str):
             detail=f"Audit with ID '{audit_id}' not found."
         )
     return result
+
+
+@router.get("/{audit_id}/artifacts/{artifact_id}", tags=["Audits"])
+async def get_audit_artifact(audit_id: str, artifact_id: str):
+    """
+    Safely serve generated audit artifacts (e.g. screenshots) from controlled directory.
+    Enforces strict path traversal prevention.
+    """
+    # Sanitize inputs against path traversal attacks
+    safe_audit_id = os.path.basename(audit_id.strip())
+    safe_artifact_id = os.path.basename(artifact_id.strip())
+
+    if safe_audit_id != audit_id or safe_artifact_id != artifact_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid artifact identifier format."
+        )
+
+    artifact_path = (ARTIFACTS_BASE_DIR / safe_audit_id / safe_artifact_id).resolve()
+
+    # Ensure path stays strictly within ARTIFACTS_BASE_DIR
+    try:
+        artifact_path.relative_to(ARTIFACTS_BASE_DIR.resolve())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to specified filepath is forbidden."
+        )
+
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact '{safe_artifact_id}' for audit '{safe_audit_id}' was not found."
+        )
+
+    return FileResponse(
+        path=str(artifact_path),
+        media_type="image/png",
+        filename=safe_artifact_id
+    )
 
 
 @router.post("/compare", response_model=AuditComparison, tags=["Audits"])

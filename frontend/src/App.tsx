@@ -4,22 +4,30 @@ import { Card } from './components/ui/Card';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Badge } from './components/ui/Badge';
-import { AuditResult, DeveloperFixPrompt, AuditComparison } from './types/audit';
-import { createAudit, getFixPrompt, compareAudits } from './services/api';
+import { AuditResult, DeveloperFixPrompt, AuditComparison, ViewportAuditResult, Issue, IssueSeverity } from './types/audit';
+import { createAudit, getFixPrompt, compareAudits, getArtifactUrl } from './services/api';
 import {
   Globe,
   Play,
   Monitor,
   Smartphone,
-  Tablet,
   CheckCircle2,
   AlertTriangle,
   Code2,
   Layers,
   Sparkles,
   GitCompare,
-  Terminal,
   FileCode,
+  Image as ImageIcon,
+  ExternalLink,
+  Loader2,
+  Bug,
+  Maximize2,
+  ChevronDown,
+  ChevronRight,
+  Filter,
+  FileText,
+  AlertCircle
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -27,7 +35,10 @@ export const App: React.FC = () => {
   const [selectedViewports, setSelectedViewports] = useState<string[]>(['desktop', 'mobile']);
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'audit' | 'compare' | 'prompt'>('audit');
-  
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<'all' | IssueSeverity>('all');
+  const [expandedIssueIds, setExpandedIssueIds] = useState<Record<string, boolean>>({});
+
   // State for real API response data
   const [currentAudit, setCurrentAudit] = useState<AuditResult | null>(null);
   const [baselineAudit, setBaselineAudit] = useState<AuditResult | null>(null);
@@ -45,6 +56,13 @@ export const App: React.FC = () => {
     }
   };
 
+  const toggleIssueExpansion = (issueId: string) => {
+    setExpandedIssueIds((prev) => ({
+      ...prev,
+      [issueId]: !prev[issueId],
+    }));
+  };
+
   const handleRunAudit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
@@ -59,7 +77,6 @@ export const App: React.FC = () => {
     setErrorMessage(null);
 
     try {
-      // If an existing audit was already completed, store it as baseline for comparison
       if (currentAudit && currentAudit.status === 'completed') {
         setBaselineAudit(currentAudit);
       }
@@ -70,15 +87,30 @@ export const App: React.FC = () => {
       });
 
       setCurrentAudit(result);
+      setSeverityFilter('all');
+      
+      // Auto-expand all issues by default for immediate visibility
+      const initialExpanded: Record<string, boolean> = {};
+      const allIssues = result.issues?.length > 0 ? result.issues : (result.findings || []);
+      allIssues.forEach((issue) => {
+        initialExpanded[issue.issue_id] = true;
+      });
+      setExpandedIssueIds(initialExpanded);
 
-      // Fetch fix prompt interface if issues exist
-      const prompt = await getFixPrompt(result.audit_id);
-      setFixPromptData(prompt);
+      try {
+        const prompt = await getFixPrompt(result.audit_id);
+        setFixPromptData(prompt);
+      } catch (promptErr) {
+        console.warn('Fix prompt not generated yet:', promptErr);
+      }
 
-      // If we have a baseline, run automatic comparison endpoint
       if (baselineAudit) {
-        const comp = await compareAudits(baselineAudit.audit_id, result.audit_id);
-        setComparisonResult(comp);
+        try {
+          const comp = await compareAudits(baselineAudit.audit_id, result.audit_id);
+          setComparisonResult(comp);
+        } catch (compErr) {
+          console.warn('Comparison failed:', compErr);
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Audit execution failed. Ensure backend API is running.');
@@ -86,6 +118,204 @@ export const App: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  const renderViewportEvidenceCard = (vpName: string, icon: React.ReactNode, vpResult?: ViewportAuditResult) => {
+    if (!vpResult) return null;
+
+    const screenshotUrl = vpResult.screenshot_artifact_id && currentAudit
+      ? getArtifactUrl(currentAudit.audit_id, vpResult.screenshot_artifact_id)
+      : null;
+
+    const hasOverflow = vpResult.responsive && vpResult.responsive.horizontal_overflow > 0;
+
+    return (
+      <Card className="flex flex-col gap-4 border-border bg-surface-raised/30">
+        <div className="flex items-center justify-between pb-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded bg-background border border-border text-accent">
+              {icon}
+            </span>
+            <div>
+              <h4 className="text-sm font-semibold text-text-primary">{vpName} Viewport</h4>
+              <p className="text-xs font-mono text-text-muted">
+                {vpResult.viewport.width} × {vpResult.viewport.height}
+              </p>
+            </div>
+          </div>
+          <Badge variant={vpResult.page.page_load_success ? "success" : "critical"}>
+            {vpResult.page.page_load_success ? (
+              `HTTP ${vpResult.page.http_status || 200}`
+            ) : (
+              "Load Failed"
+            )}
+          </Badge>
+        </div>
+
+        {/* Page Metadata Summary */}
+        <div className="flex flex-col gap-2 font-mono text-xs">
+          <div className="flex items-center justify-between text-text-muted">
+            <span>Title:</span>
+            <span className="text-text-primary font-medium truncate max-w-[200px]" title={vpResult.page.title}>
+              {vpResult.page.title || "N/A"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-text-muted">
+            <span>Final URL:</span>
+            <a
+              href={vpResult.page.final_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-accent hover:underline truncate max-w-[200px] flex items-center gap-1"
+            >
+              <span className="truncate">{vpResult.page.final_url}</span>
+              <ExternalLink className="w-3 h-3 shrink-0" />
+            </a>
+          </div>
+        </div>
+
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs">
+          <div className="p-2 rounded bg-background border border-border flex flex-col">
+            <span className="text-text-muted text-[10px]">Console Errors</span>
+            <span className={`font-bold ${vpResult.console_errors.length > 0 ? "text-status-error" : "text-status-success"}`}>
+              {vpResult.console_errors.length}
+            </span>
+          </div>
+          <div className="p-2 rounded bg-background border border-border flex flex-col">
+            <span className="text-text-muted text-[10px]">Network Failures</span>
+            <span className={`font-bold ${vpResult.network_failures.length > 0 ? "text-status-error" : "text-status-success"}`}>
+              {vpResult.network_failures.length}
+            </span>
+          </div>
+          <div className="p-2 rounded bg-background border border-border flex flex-col">
+            <span className="text-text-muted text-[10px]">Overflow</span>
+            <span className={`font-bold ${hasOverflow ? "text-status-warning" : "text-status-success"}`}>
+              {vpResult.responsive.horizontal_overflow}px
+            </span>
+          </div>
+        </div>
+
+        {/* Screenshot Preview */}
+        {screenshotUrl ? (
+          <div className="relative rounded overflow-hidden border border-border bg-background group">
+            <img
+              src={screenshotUrl}
+              alt={`${vpName} Screenshot`}
+              className="w-full h-48 object-cover object-top transition-transform group-hover:scale-105"
+            />
+            <button
+              onClick={() => setSelectedImage(screenshotUrl)}
+              className="absolute inset-0 bg-background/60 backdrop-blur-sm opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 text-xs font-mono text-text-primary transition-opacity"
+            >
+              <Maximize2 className="w-4 h-4 text-accent" />
+              View Full Screenshot
+            </button>
+          </div>
+        ) : (
+          <div className="h-48 rounded border border-dashed border-border bg-background flex items-center justify-center text-xs text-text-muted font-mono">
+            <ImageIcon className="w-4 h-4 mr-2" />
+            No Screenshot Captured
+          </div>
+        )}
+      </Card>
+    );
+  };
+
+  const renderIssueEvidenceDetails = (issue: Issue) => {
+    const isResponsive = issue.category === 'responsive' || issue.category === 'layout' || issue.title.toLowerCase().includes('overflow');
+    const isConsole = issue.category === 'console' || issue.category === 'console_error';
+    const isBrokenResource = issue.category === 'broken_resource' || issue.category === 'network_failure';
+    const vpName = issue.viewport?.toLowerCase();
+    const vpData = vpName === 'mobile' ? currentAudit?.mobile : (vpName === 'desktop' ? currentAudit?.desktop : null);
+
+    return (
+      <div className="mt-3 pt-3 border-t border-border/60 flex flex-col gap-3 font-mono text-xs">
+        <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5 text-accent" />
+          <span>Collected Evidence & Diagnostic Data</span>
+        </div>
+
+        {/* Responsive / Overflow evidence breakdown */}
+        {isResponsive && vpData?.responsive && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-background p-2.5 rounded border border-border">
+            <div>
+              <span className="text-[10px] text-text-muted block">Viewport</span>
+              <span className="font-semibold text-text-primary">{vpData.responsive.viewport_width} × {vpData.responsive.viewport_height}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-text-muted block">Document width</span>
+              <span className="font-semibold text-text-primary">{vpData.responsive.document_scroll_width}px</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-text-muted block">Viewport width</span>
+              <span className="font-semibold text-text-primary">{vpData.responsive.viewport_width}px</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-text-muted block">Overflow</span>
+              <span className="font-semibold text-status-warning">{vpData.responsive.horizontal_overflow}px</span>
+            </div>
+          </div>
+        )}
+
+        {/* Target Selector & Target URL */}
+        {(issue.selector || currentAudit?.target_url || currentAudit?.url) && (
+          <div className="flex flex-col gap-1 bg-background p-2.5 rounded border border-border">
+            {currentAudit && (
+              <div className="flex items-center gap-2 text-text-muted">
+                <span className="shrink-0 text-[11px]">Target URL:</span>
+                <span className="text-text-primary truncate font-mono">{issue.viewport ? `${currentAudit.target_url || currentAudit.url}` : (currentAudit.target_url || currentAudit.url)}</span>
+              </div>
+            )}
+            {issue.selector && (
+              <div className="flex items-center gap-2 text-text-muted">
+                <span className="shrink-0 text-[11px]">Target Element / Selector:</span>
+                <code className="text-accent truncate font-mono bg-accent/10 px-1.5 py-0.5 rounded">{issue.selector}</code>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Console / Network Log Details */}
+        {(isConsole || isBrokenResource) && vpData && (
+          <div className="bg-background p-2.5 rounded border border-border flex flex-col gap-1.5">
+            <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Browser Log Trace</span>
+            {vpData.console_errors.map((err, idx) => (
+              <div key={idx} className="text-status-error font-mono text-[11px] bg-status-error/5 p-1.5 rounded border border-status-error/20">
+                Message: {err.text}
+                {err.location && <div className="text-[10px] text-text-muted mt-0.5">Location: {err.location}</div>}
+              </div>
+            ))}
+            {vpData.network_failures.map((net, idx) => (
+              <div key={idx} className="text-status-error font-mono text-[11px] bg-status-error/5 p-1.5 rounded border border-status-error/20">
+                URL: {net.url}
+                {net.status_code && <div>HTTP Status: {net.status_code}</div>}
+                <div>Error: {net.error_text}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Evidence References Array */}
+        {issue.evidence_references && issue.evidence_references.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-text-muted uppercase tracking-wider">Evidence References</span>
+            <div className="flex flex-wrap gap-1.5">
+              {issue.evidence_references.map((ref, idx) => (
+                <span key={idx} className="px-2 py-0.5 rounded bg-background border border-border text-[11px] font-mono text-text-secondary">
+                  {ref}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const allIssues = currentAudit ? (currentAudit.issues?.length > 0 ? currentAudit.issues : (currentAudit.findings || [])) : [];
+  const filteredIssues = severityFilter === 'all'
+    ? allIssues
+    : allIssues.filter((i) => i.severity.toLowerCase() === severityFilter.toLowerCase());
 
   return (
     <div className="min-h-screen bg-background text-text-primary flex flex-col font-sans">
@@ -95,9 +325,12 @@ export const App: React.FC = () => {
         {/* URL Entry & Test Config Bar */}
         <Card className="border border-border bg-surface-raised/40 backdrop-blur">
           <form onSubmit={handleRunAudit} className="flex flex-col gap-4">
-            <div className="flex items-center gap-2 text-xs font-mono text-text-muted">
-              <Sparkles className="w-3.5 h-3.5 text-accent" />
-              <span>TEST ENGINE DISPATCHER</span>
+            <div className="flex items-center justify-between text-xs font-mono text-text-muted">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-accent" />
+                <span>REAL PLAYWRIGHT AUDIT ENGINE</span>
+              </div>
+              <span className="text-[10px] text-text-muted">Desktop (1440x900) & Mobile (390x844)</span>
             </div>
 
             <div className="flex flex-col md:flex-row items-center gap-3">
@@ -107,9 +340,10 @@ export const App: React.FC = () => {
                 </div>
                 <Input
                   type="text"
-                  placeholder="Enter application URL (e.g. https://myapp.com)"
+                  placeholder="Enter application URL (e.g. https://example.com)"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
+                  disabled={isLoading}
                   className="pl-9 font-mono text-sm bg-background"
                 />
               </div>
@@ -140,26 +374,27 @@ export const App: React.FC = () => {
                   <Smartphone className="w-3.5 h-3.5" />
                   Mobile
                 </button>
-                <button
-                  type="button"
-                  onClick={() => toggleViewport('tablet')}
-                  className={`px-2.5 py-1.5 rounded text-xs font-mono flex items-center gap-1.5 transition-colors ${
-                    selectedViewports.includes('tablet')
-                      ? 'bg-surface-raised text-text-primary border border-border'
-                      : 'text-text-muted hover:text-text-primary'
-                  }`}
-                >
-                  <Tablet className="w-3.5 h-3.5" />
-                  Tablet
-                </button>
               </div>
 
-              <Button type="submit" isLoading={isLoading} className="w-full md:w-auto font-mono">
+              <Button type="submit" isLoading={isLoading} disabled={isLoading} className="w-full md:w-auto font-mono">
                 <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
                 Run Audit
               </Button>
             </div>
           </form>
+
+          {/* Loading Indicator */}
+          {isLoading && (
+            <div className="mt-4 p-4 rounded bg-accent/5 border border-accent/20 text-accent text-xs font-mono flex items-center gap-3 animate-pulse">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-accent" />
+              <div>
+                <span className="font-semibold">Launching Playwright Chromium Engine...</span>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  Visiting {url}, recording console logs, inspecting network responses, checking images/links, and calculating horizontal overflow.
+                </p>
+              </div>
+            </div>
+          )}
 
           {errorMessage && (
             <div className="mt-4 p-3 rounded bg-status-error/10 border border-status-error/20 text-status-error text-xs font-mono flex items-center gap-2">
@@ -168,6 +403,56 @@ export const App: React.FC = () => {
             </div>
           )}
         </Card>
+
+        {/* Audit Summary Header Bar */}
+        {currentAudit && (
+          <Card className="border border-border bg-surface-raised/50 flex flex-col md:flex-row md:items-center justify-between gap-4 py-4 px-6 font-mono">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 text-xs text-text-muted">
+                <span>AUDIT SUMMARY</span>
+                <span>•</span>
+                <span className="text-[11px]">ID: {currentAudit.audit_id.slice(0, 8)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={currentAudit.target_url || currentAudit.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm font-semibold text-text-primary hover:text-accent flex items-center gap-1.5 truncate max-w-md"
+                >
+                  <span className="truncate">{currentAudit.target_url || currentAudit.url}</span>
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                </a>
+                <Badge variant={currentAudit.status === 'completed' ? 'success' : 'critical'}>
+                  {currentAudit.status.toUpperCase()}
+                </Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-background border border-border">
+                <span className="text-text-muted">Total:</span>
+                <span className="font-bold text-text-primary">{currentAudit.stats?.total_issues ?? allIssues.length}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-status-error/10 border border-status-error/20 text-status-error">
+                <span>Critical:</span>
+                <span className="font-bold">{currentAudit.stats?.critical_count ?? 0}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-status-warning/10 border border-status-warning/20 text-status-warning">
+                <span>High:</span>
+                <span className="font-bold">{currentAudit.stats?.high_count ?? 0}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">
+                <span>Medium:</span>
+                <span className="font-bold">{currentAudit.stats?.medium_count ?? 0}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-status-info/10 border border-status-info/20 text-status-info">
+                <span>Low:</span>
+                <span className="font-bold">{currentAudit.stats?.low_count ?? 0}</span>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {/* Audit Navigation Tabs */}
         {currentAudit && (
@@ -182,7 +467,7 @@ export const App: React.FC = () => {
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                Audit Evidence & Issues
+                Audit Evidence & Issues ({allIssues.length})
               </button>
 
               <button
@@ -211,84 +496,159 @@ export const App: React.FC = () => {
                 </button>
               )}
             </div>
-
-            <div className="flex items-center gap-2 text-xs font-mono text-text-muted">
-              <span>Audit ID:</span>
-              <span className="text-text-primary font-semibold">{currentAudit.audit_id.slice(0, 8)}...</span>
-            </div>
           </div>
         )}
 
         {/* Tab Content 1: Main Audit View */}
         {activeTab === 'audit' && currentAudit && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            {/* Stats Summary Sidebar */}
-            <Card className="flex flex-col gap-4">
-              <h3 className="text-xs font-mono text-text-muted uppercase tracking-wider">Audit Summary</h3>
-              
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between p-2.5 rounded bg-background border border-border">
-                  <span className="text-xs text-text-muted">Total Issues</span>
-                  <span className="font-mono text-sm font-bold text-text-primary">{currentAudit.stats.total_issues}</span>
+          <div className="flex flex-col gap-6">
+            {/* Viewport Browser Evidence Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {renderViewportEvidenceCard("Desktop", <Monitor className="w-4 h-4" />, currentAudit.desktop || currentAudit.evidence?.desktop)}
+              {renderViewportEvidenceCard("Mobile", <Smartphone className="w-4 h-4" />, currentAudit.mobile || currentAudit.evidence?.mobile)}
+            </div>
+
+            {/* Issues Found Section Header */}
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <Bug className="w-4 h-4 text-accent" />
+                  <h3 className="text-sm font-mono font-bold text-text-primary uppercase tracking-wider">
+                    Issues Found ({allIssues.length})
+                  </h3>
                 </div>
-                <div className="flex items-center justify-between p-2.5 rounded bg-background border border-border">
-                  <span className="text-xs text-text-muted">Critical</span>
-                  <Badge variant="critical">{currentAudit.stats.critical_count}</Badge>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded bg-background border border-border">
-                  <span className="text-xs text-text-muted">High</span>
-                  <Badge variant="high">{currentAudit.stats.high_count}</Badge>
-                </div>
-                <div className="flex items-center justify-between p-2.5 rounded bg-background border border-border">
-                  <span className="text-xs text-text-muted">Medium</span>
-                  <Badge variant="medium">{currentAudit.stats.medium_count}</Badge>
+
+                {/* Severity Filter Buttons Bar */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-mono text-text-muted flex items-center gap-1 mr-1">
+                    <Filter className="w-3 h-3 text-accent" /> Filter:
+                  </span>
+                  <button
+                    onClick={() => setSeverityFilter('all')}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      severityFilter === 'all'
+                        ? 'bg-accent text-background font-bold'
+                        : 'bg-background border border-border text-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    All ({allIssues.length})
+                  </button>
+                  <button
+                    onClick={() => setSeverityFilter('critical')}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      severityFilter === 'critical'
+                        ? 'bg-status-error text-white font-bold'
+                        : 'bg-background border border-border text-status-error/80 hover:text-status-error'
+                    }`}
+                  >
+                    Critical ({currentAudit.stats?.critical_count ?? 0})
+                  </button>
+                  <button
+                    onClick={() => setSeverityFilter('high')}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      severityFilter === 'high'
+                        ? 'bg-status-warning text-white font-bold'
+                        : 'bg-background border border-border text-status-warning/80 hover:text-status-warning'
+                    }`}
+                  >
+                    High ({currentAudit.stats?.high_count ?? 0})
+                  </button>
+                  <button
+                    onClick={() => setSeverityFilter('medium')}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      severityFilter === 'medium'
+                        ? 'bg-yellow-500 text-black font-bold'
+                        : 'bg-background border border-border text-yellow-400 hover:text-yellow-300'
+                    }`}
+                  >
+                    Medium ({currentAudit.stats?.medium_count ?? 0})
+                  </button>
+                  <button
+                    onClick={() => setSeverityFilter('low')}
+                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                      severityFilter === 'low'
+                        ? 'bg-status-info text-white font-bold'
+                        : 'bg-background border border-border text-status-info/80 hover:text-status-info'
+                    }`}
+                  >
+                    Low ({currentAudit.stats?.low_count ?? 0})
+                  </button>
                 </div>
               </div>
 
-              <div className="border-t border-border pt-3 flex flex-col gap-2">
-                <span className="text-xs font-mono text-text-muted">Tested Viewports</span>
-                {currentAudit.evidence?.viewports_tested.map((vp, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-xs font-mono text-text-muted">
-                    <span>{vp.name}</span>
-                    <span>{vp.width}x{vp.height}</span>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            {/* Main Issues List */}
-            <div className="md:col-span-3 flex flex-col gap-4">
-              {currentAudit.issues.length === 0 ? (
-                <Card className="flex flex-col items-center justify-center py-12 text-center border-dashed">
-                  <CheckCircle2 className="w-8 h-8 text-status-success mb-3 opacity-80" />
-                  <h4 className="text-sm font-medium text-text-primary">No Issues Detected in Baseline Schema</h4>
-                  <p className="text-xs text-text-muted max-w-sm mt-1">
-                    The deterministic evidence engine collected initial browser traces cleanly.
+              {/* Clean Audit State: issues.length === 0 */}
+              {allIssues.length === 0 ? (
+                <Card className="flex flex-col items-center justify-center py-12 text-center border-dashed border-status-success/30 bg-status-success/5">
+                  <CheckCircle2 className="w-10 h-10 text-status-success mb-3 opacity-90" />
+                  <h4 className="text-base font-semibold text-text-primary">No issues detected</h4>
+                  <p className="text-xs text-text-muted max-w-md mt-1 font-mono">
+                    Playwright inspected the site cleanly across all viewports. No missing metadata, broken images, broken links, console errors, network request failures, or horizontal layout overflows were detected.
                   </p>
                 </Card>
+              ) : filteredIssues.length === 0 ? (
+                <Card className="flex flex-col items-center justify-center py-10 text-center border-dashed">
+                  <AlertCircle className="w-8 h-8 text-text-muted mb-2" />
+                  <h4 className="text-sm font-medium text-text-primary">No issues match filter "{severityFilter}"</h4>
+                  <button
+                    onClick={() => setSeverityFilter('all')}
+                    className="mt-3 text-xs font-mono text-accent underline hover:text-accent/80"
+                  >
+                    Clear Filter
+                  </button>
+                </Card>
               ) : (
-                currentAudit.issues.map((issue) => (
-                  <Card key={issue.issue_id} className="flex flex-col gap-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={issue.severity as any}>{issue.severity}</Badge>
-                        <span className="font-mono text-xs text-text-muted">{issue.issue_id}</span>
-                      </div>
-                      <Badge variant="neutral">{issue.category}</Badge>
-                    </div>
+                <div className="flex flex-col gap-4">
+                  {filteredIssues.map((issue) => {
+                    const isExpanded = expandedIssueIds[issue.issue_id] ?? true;
 
-                    <h4 className="text-sm font-semibold text-text-primary">{issue.title}</h4>
-                    <p className="text-xs text-text-muted">{issue.description}</p>
+                    return (
+                      <Card key={issue.issue_id} className="flex flex-col gap-3 border-border bg-surface-raised/20 hover:border-border/80 transition-colors">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => toggleIssueExpansion(issue.issue_id)}
+                              className="p-1 rounded hover:bg-background text-text-muted hover:text-text-primary transition-colors"
+                              title={isExpanded ? "Collapse Details" : "Expand Details"}
+                            >
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </button>
 
-                    {issue.selector && (
-                      <div className="p-2 rounded bg-background border border-border font-mono text-xs text-text-muted flex items-center gap-2">
-                        <Terminal className="w-3.5 h-3.5 text-accent" />
-                        <span>Selector:</span>
-                        <code className="text-text-primary">{issue.selector}</code>
-                      </div>
-                    )}
-                  </Card>
-                ))
+                            <Badge variant={issue.severity.toLowerCase() as any}>
+                              {issue.severity.toUpperCase()}
+                            </Badge>
+
+                            <span className="font-mono text-xs font-bold text-text-primary bg-background px-2 py-0.5 rounded border border-border">
+                              {issue.issue_id}
+                            </span>
+
+                            {issue.viewport && (
+                              <span className="px-2 py-0.5 rounded bg-background border border-border text-[10px] font-mono text-accent flex items-center gap-1">
+                                {issue.viewport.toLowerCase() === 'mobile' ? (
+                                  <Smartphone className="w-3 h-3" />
+                                ) : (
+                                  <Monitor className="w-3 h-3" />
+                                )}
+                                {issue.viewport.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+
+                          <Badge variant="neutral">{issue.category.toUpperCase()}</Badge>
+                        </div>
+
+                        <div>
+                          <h4 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                            {issue.title}
+                          </h4>
+                          <p className="text-xs text-text-muted mt-1 leading-relaxed">{issue.description}</p>
+                        </div>
+
+                        {/* Expandable Details & Evidence */}
+                        {isExpanded && renderIssueEvidenceDetails(issue)}
+                      </Card>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
@@ -347,7 +707,7 @@ export const App: React.FC = () => {
         )}
 
         {/* Empty State when no audit has been run */}
-        {!currentAudit && (
+        {!currentAudit && !isLoading && (
           <Card className="flex flex-col items-center justify-center py-20 text-center border-dashed">
             <div className="w-12 h-12 rounded-full bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-4">
               <Globe className="w-6 h-6" />
@@ -356,27 +716,39 @@ export const App: React.FC = () => {
               Ready to Audit Application Quality
             </h3>
             <p className="text-xs text-text-muted max-w-md mb-6">
-              Enter a web application URL above to collect objective browser evidence, identify responsive & accessibility bugs, and generate context-aware developer fix prompts.
+              Enter a web application URL above to launch Playwright Chromium, collect real browser traces, identify responsive layout overflows, missing meta descriptions, broken resources, and console errors.
             </p>
             <div className="flex items-center gap-3 text-xs font-mono text-text-muted">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-accent" />
-                Playwright Automation
+                Playwright Chromium Engine
               </span>
               <span>•</span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-status-success" />
-                Stable Issue Hash IDs
+                Desktop (1440x900) & Mobile (390x844)
               </span>
               <span>•</span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-status-info" />
-                Before/After Retests
+                Deterministic Issue Hash IDs
               </span>
             </div>
           </Card>
         )}
       </main>
+
+      {/* Screenshot Lightbox Modal */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex items-center justify-center p-6"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-5xl w-full max-h-[90vh] bg-surface-raised border border-border rounded-lg p-2 overflow-auto">
+            <img src={selectedImage} alt="Full Screenshot" className="w-full h-auto rounded" />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

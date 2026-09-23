@@ -2,8 +2,12 @@ export type IssueSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 export type IssueCategory =
   | 'layout'
+  | 'responsive'
   | 'console_error'
+  | 'console'
   | 'network_failure'
+  | 'broken_resource'
+  | 'seo'
   | 'accessibility'
   | 'performance'
   | 'interaction';
@@ -43,6 +47,34 @@ export interface NetworkFailure {
   error_text: string;
 }
 
+export interface ResponsiveMetrics {
+  viewport_width: number;
+  viewport_height: number;
+  document_scroll_width: number;
+  document_client_width: number;
+  horizontal_overflow: number;
+}
+
+export interface PageMetadata {
+  initial_url: string;
+  final_url: string;
+  title: string;
+  http_status?: number;
+  page_load_success: boolean;
+  error_message?: string;
+}
+
+export interface ViewportAuditResult {
+  viewport: BrowserViewport;
+  page: PageMetadata;
+  screenshot_artifact_id?: string;
+  screenshot_url?: string;
+  console_errors: ConsoleLogEntry[];
+  console_logs?: ConsoleLogEntry[];
+  network_failures: NetworkFailure[];
+  responsive: ResponsiveMetrics;
+}
+
 export interface LayoutIssue {
   viewport: BrowserViewport;
   selector: string;
@@ -60,6 +92,8 @@ export interface AccessibilityIssue {
 export interface BrowserEvidence {
   url: string;
   timestamp: string;
+  desktop?: ViewportAuditResult;
+  mobile?: ViewportAuditResult;
   viewports_tested: BrowserViewport[];
   screenshot_paths: string[];
   console_errors: ConsoleLogEntry[];
@@ -85,12 +119,17 @@ export type AuditStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface AuditResult {
   audit_id: string;
+  target_url?: string;
   url: string;
   status: AuditStatus;
   created_at: string;
+  started_at?: string;
   completed_at?: string;
+  desktop?: ViewportAuditResult;
+  mobile?: ViewportAuditResult;
   evidence?: BrowserEvidence;
   issues: Issue[];
+  findings?: Issue[];
   stats: AuditSummaryStats;
   error_message?: string;
 }

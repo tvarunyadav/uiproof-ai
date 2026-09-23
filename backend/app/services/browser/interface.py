@@ -11,7 +11,12 @@ class BaseBrowserRunner(ABC):
     """
 
     @abstractmethod
-    async def collect_evidence(self, url: str, viewports: List[str]) -> BrowserEvidence:
+    async def collect_evidence(
+        self,
+        url: str,
+        viewports: List[str],
+        audit_id: Optional[str] = None
+    ) -> BrowserEvidence:
         """Collect objective deterministic evidence from the target URL."""
         pass
 
@@ -22,7 +27,12 @@ class PlaywrightBrowserRunnerStub(BaseBrowserRunner):
     Returns clean structural schema container. Real Playwright execution will be integrated in future milestone.
     """
 
-    async def collect_evidence(self, url: str, viewports: List[str]) -> BrowserEvidence:
+    async def collect_evidence(
+        self,
+        url: str,
+        viewports: List[str],
+        audit_id: Optional[str] = None
+    ) -> BrowserEvidence:
         parsed_viewports = [
             BrowserViewport(name="Desktop", width=1920, height=1080, device_scale_factor=1.0)
             if v == "desktop" else

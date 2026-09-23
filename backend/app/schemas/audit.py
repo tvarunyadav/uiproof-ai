@@ -2,7 +2,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, HttpUrl
 from typing import List, Optional, Dict
 from datetime import datetime
-from app.schemas.evidence import BrowserEvidence
+from app.schemas.evidence import BrowserEvidence, ViewportAuditResult
 from app.schemas.issue import Issue
 
 
@@ -17,7 +17,7 @@ class CreateAuditRequest(BaseModel):
     url: str = Field(..., description="Target web application URL to audit")
     viewports: List[str] = Field(
         default=["desktop", "mobile"],
-        description="Viewport sizes to test: desktop (1920x1080), mobile (375x812), tablet (768x1024)"
+        description="Viewport sizes to test: desktop (1440x900), mobile (390x844)"
     )
     baseline_audit_id: Optional[str] = Field(
         None,
@@ -40,14 +40,20 @@ class AuditSummaryStats(BaseModel):
 
 class AuditResult(BaseModel):
     audit_id: str = Field(..., description="Unique UUID for this audit run")
+    target_url: Optional[str] = Field(None, description="Target web application URL")
     url: str
     status: AuditStatus
     created_at: datetime
+    started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    desktop: Optional[ViewportAuditResult] = None
+    mobile: Optional[ViewportAuditResult] = None
     evidence: Optional[BrowserEvidence] = None
     issues: List[Issue] = []
+    findings: List[Issue] = []
     stats: AuditSummaryStats = Field(default_factory=AuditSummaryStats)
     error_message: Optional[str] = None
+
 
 
 class AuditComparison(BaseModel):
