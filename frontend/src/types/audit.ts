@@ -156,3 +156,21 @@ export interface DeveloperFixPrompt {
   fix_prompt: string;
   suggested_files: string[];
 }
+
+export interface AIAnalysisDetails {
+  summary: string;
+  likely_causes: string[];
+  investigation_hints: string[];
+  expected_result: string;
+  constraints: string[];
+  verification_steps: string[];
+  fix_prompt: string;
+}
+
+export interface IssueAnalysisResponse {
+  audit_id: string;
+  issue_id: string;
+  issue: Issue;
+  analysis: AIAnalysisDetails;
+}
+

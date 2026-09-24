@@ -4,8 +4,8 @@ import { Card } from './components/ui/Card';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Badge } from './components/ui/Badge';
-import { AuditResult, DeveloperFixPrompt, AuditComparison, ViewportAuditResult, Issue, IssueSeverity } from './types/audit';
-import { createAudit, getFixPrompt, compareAudits, getArtifactUrl } from './services/api';
+import { AuditResult, DeveloperFixPrompt, AuditComparison, ViewportAuditResult, Issue, IssueSeverity, IssueAnalysisResponse } from './types/audit';
+import { createAudit, getFixPrompt, compareAudits, getArtifactUrl, analyzeIssue } from './services/api';
 import {
   Globe,
   Play,
@@ -27,7 +27,9 @@ import {
   ChevronRight,
   Filter,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  ShieldCheck
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -46,6 +48,12 @@ export const App: React.FC = () => {
   const [fixPromptData, setFixPromptData] = useState<DeveloperFixPrompt | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Milestone 5B: Issue AI Analysis State
+  const [analyzingIssueId, setAnalyzingIssueId] = useState<string | null>(null);
+  const [issueAnalyses, setIssueAnalyses] = useState<Record<string, IssueAnalysisResponse>>({});
+  const [issueAnalysisErrors, setIssueAnalysisErrors] = useState<Record<string, string>>({});
+  const [copiedPromptIssueId, setCopiedPromptIssueId] = useState<string | null>(null);
+
   const toggleViewport = (vp: string) => {
     if (selectedViewports.includes(vp)) {
       if (selectedViewports.length > 1) {
@@ -61,6 +69,39 @@ export const App: React.FC = () => {
       ...prev,
       [issueId]: !prev[issueId],
     }));
+  };
+
+  const handleAnalyzeIssue = async (issueId: string) => {
+    if (!currentAudit) return;
+    setAnalyzingIssueId(issueId);
+    setIssueAnalysisErrors((prev) => {
+      const next = { ...prev };
+      delete next[issueId];
+      return next;
+    });
+
+    try {
+      const res = await analyzeIssue(currentAudit.audit_id, issueId);
+      setIssueAnalyses((prev) => ({
+        ...prev,
+        [issueId]: res,
+      }));
+    } catch (err: any) {
+      setIssueAnalysisErrors((prev) => ({
+        ...prev,
+        [issueId]: err.message || 'Failed to analyze issue.',
+      }));
+    } finally {
+      setAnalyzingIssueId(null);
+    }
+  };
+
+  const handleCopyPrompt = (issueId: string, promptText: string) => {
+    navigator.clipboard.writeText(promptText);
+    setCopiedPromptIssueId(issueId);
+    setTimeout(() => {
+      setCopiedPromptIssueId((prev) => (prev === issueId ? null : prev));
+    }, 2000);
   };
 
   const handleRunAudit = async (e: React.FormEvent) => {
@@ -221,6 +262,182 @@ export const App: React.FC = () => {
     );
   };
 
+  const renderAIFixPromptSection = (issue: Issue) => {
+    const isAnalyzing = analyzingIssueId === issue.issue_id;
+    const aiAnalysisResponse = issueAnalyses[issue.issue_id];
+    const aiAnalysis = aiAnalysisResponse?.analysis;
+    const analysisError = issueAnalysisErrors[issue.issue_id];
+
+    return (
+      <div className="mt-3 pt-3 border-t border-border/80 flex flex-col gap-3">
+        {!aiAnalysis && !isAnalyzing && (
+          <div className="flex items-center justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAnalyzeIssue(issue.issue_id)}
+              className="font-mono text-xs flex items-center gap-1.5 border-accent/40 text-accent hover:bg-accent/10"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Generate AI Fix Prompt
+            </Button>
+          </div>
+        )}
+
+        {isAnalyzing && (
+          <div className="p-3 rounded bg-accent/5 border border-accent/20 text-accent text-xs font-mono flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin shrink-0 text-accent" />
+            <span>Analyzing issue...</span>
+          </div>
+        )}
+
+        {analysisError && !isAnalyzing && (
+          <div className="p-3 rounded bg-status-error/10 border border-status-error/20 text-status-error text-xs font-mono flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{analysisError}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAnalyzeIssue(issue.issue_id)}
+              className="text-[11px] h-7 px-2"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {aiAnalysis && !isAnalyzing && (
+          <div className="p-4 rounded-lg border border-accent/30 bg-surface-raised/60 flex flex-col gap-4 font-sans text-xs">
+            {/* Header with grounding badge */}
+            <div className="flex items-center justify-between pb-2 border-b border-border/80">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-accent" />
+                <h4 className="font-mono font-bold text-xs text-text-primary uppercase tracking-wide">
+                  AI Analysis
+                </h4>
+              </div>
+              <span className="text-[10px] font-mono text-text-muted flex items-center gap-1 bg-background px-2 py-0.5 rounded border border-border">
+                <ShieldCheck className="w-3 h-3 text-status-success" />
+                Generated from collected browser evidence
+              </span>
+            </div>
+
+            {/* Summary */}
+            {aiAnalysis.summary && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Summary
+                </span>
+                <p className="text-text-primary leading-relaxed">{aiAnalysis.summary}</p>
+              </div>
+            )}
+
+            {/* Likely Causes */}
+            {aiAnalysis.likely_causes && aiAnalysis.likely_causes.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Likely Causes
+                </span>
+                <ul className="list-disc list-inside space-y-1 text-text-muted pl-1">
+                  {aiAnalysis.likely_causes.map((cause, idx) => (
+                    <li key={idx} className="text-text-primary">{cause}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Investigation Hints */}
+            {aiAnalysis.investigation_hints && aiAnalysis.investigation_hints.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Investigation Hints
+                </span>
+                <ul className="list-disc list-inside space-y-1 text-text-muted pl-1">
+                  {aiAnalysis.investigation_hints.map((hint, idx) => (
+                    <li key={idx} className="text-text-primary">{hint}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Expected Result */}
+            {aiAnalysis.expected_result && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Expected Result
+                </span>
+                <p className="text-text-primary leading-relaxed">{aiAnalysis.expected_result}</p>
+              </div>
+            )}
+
+            {/* Constraints */}
+            {aiAnalysis.constraints && aiAnalysis.constraints.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Constraints
+                </span>
+                <ul className="list-disc list-inside space-y-1 text-text-muted pl-1">
+                  {aiAnalysis.constraints.map((constraint, idx) => (
+                    <li key={idx} className="text-text-primary">{constraint}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Verification Steps */}
+            {aiAnalysis.verification_steps && aiAnalysis.verification_steps.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <span className="font-mono font-semibold text-text-secondary text-[10px] uppercase tracking-wider">
+                  Verification Steps
+                </span>
+                <ol className="list-decimal list-inside space-y-1 text-text-muted pl-1">
+                  {aiAnalysis.verification_steps.map((step, idx) => (
+                    <li key={idx} className="text-text-primary">{step}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Developer Fix Prompt */}
+            {aiAnalysis.fix_prompt && (
+              <div className="mt-2 pt-3 border-t border-border flex flex-col gap-2 font-mono">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-accent uppercase tracking-wider flex items-center gap-1.5">
+                    <Code2 className="w-3.5 h-3.5 text-accent" />
+                    Developer Fix Prompt
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCopyPrompt(issue.issue_id, aiAnalysis.fix_prompt)}
+                    className="text-xs h-7 px-2.5 flex items-center gap-1.5 font-mono"
+                  >
+                    {copiedPromptIssueId === issue.issue_id ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-status-success" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy Prompt
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <pre className="p-3 rounded bg-background border border-border text-xs text-text-secondary overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-96">
+                  {aiAnalysis.fix_prompt}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderIssueEvidenceDetails = (issue: Issue) => {
     const isResponsive = issue.category === 'responsive' || issue.category === 'layout' || issue.title.toLowerCase().includes('overflow');
     const isConsole = issue.category === 'console' || issue.category === 'console_error';
@@ -308,9 +525,13 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* AI Fix Prompt & Analysis Section */}
+        {renderAIFixPromptSection(issue)}
       </div>
     );
   };
+
 
   const allIssues = currentAudit ? (currentAudit.issues?.length > 0 ? currentAudit.issues : (currentAudit.findings || [])) : [];
   const filteredIssues = severityFilter === 'all'
