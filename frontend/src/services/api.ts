@@ -1,4 +1,4 @@
-import { AuditResult, CreateAuditRequest, AuditComparison, DeveloperFixPrompt, IssueAnalysisResponse } from '../types/audit';
+import { AuditResult, CreateAuditRequest, AuditComparison, DeveloperFixPrompt, IssueAnalysisResponse, RetestAuditResponse } from '../types/audit';
 
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const API_BASE_URL = RAW_BASE.endsWith('/api/v1') ? RAW_BASE : `${RAW_BASE}/api/v1`;
@@ -50,6 +50,28 @@ export async function getAudit(auditId: string): Promise<AuditResult> {
   if (!response.ok) {
     throw new Error(`Failed to fetch audit ${auditId} (${response.status})`);
   }
+  return response.json();
+}
+
+export async function retestAudit(auditId: string): Promise<RetestAuditResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/audits/${auditId}/retest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+  } catch (netErr: any) {
+    throw new Error(`Cannot connect to backend API at ${API_BASE_URL}. Ensure FastAPI backend is running.`);
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: `Retest failed (${response.status})` }));
+    const errorMsg = typeof errorData.detail === 'string' ? errorData.detail : (errorData.detail?.message || errorData.error_message || `Retest failed with status ${response.status}`);
+    throw new Error(errorMsg);
+  }
+
   return response.json();
 }
 
@@ -137,4 +159,5 @@ export function getArtifactUrl(auditId: string, artifactPathOrId?: string): stri
   }
   return `${API_BASE_URL}/audits/${auditId}/artifacts/${artifactPathOrId}`;
 }
+
 

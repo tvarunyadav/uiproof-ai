@@ -10,6 +10,7 @@ from app.schemas.audit import (
     AuditResult,
     AuditComparison,
     DeveloperFixPrompt,
+    RetestAuditResponse,
 )
 from app.schemas.ai import IssueAnalysisResponse
 from app.services.ai.interface import AINotConfiguredError, AIProviderError
@@ -56,6 +57,25 @@ async def get_audit(audit_id: str):
             detail=f"Audit with ID '{audit_id}' not found."
         )
     return result
+
+
+@router.post("/{audit_id}/retest", response_model=RetestAuditResponse, status_code=status.HTTP_201_CREATED, tags=["Audits"])
+async def retest_audit(audit_id: str):
+    """
+    Re-run Playwright audit using the baseline audit's URL and viewports.
+    Returns both the newly generated retest audit and deterministic comparison.
+    """
+    try:
+        retest_audit_result, comparison = await audit_engine.retest_audit(audit_id)
+        return RetestAuditResponse(
+            retest_audit=retest_audit_result,
+            comparison=comparison
+        )
+    except KeyError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err).strip("'\"")
+        )
 
 
 @router.get("/{audit_id}/artifacts/{artifact_id}", tags=["Audits"])
@@ -116,6 +136,23 @@ async def compare_audits(request: AuditComparisonRequest):
     return comparison
 
 
+@router.get("/{audit_id}/compare/{retest_id}", response_model=AuditComparison, tags=["Audits"])
+async def get_audit_comparison(audit_id: str, retest_id: str):
+    """
+    Retrieve deterministic comparison between baseline audit (audit_id) and retest audit (retest_id).
+    """
+    comparison = audit_engine.compare_audits(
+        baseline_id=audit_id,
+        new_id=retest_id
+    )
+    if not comparison:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="One or both audit IDs specified for comparison were not found."
+        )
+    return comparison
+
+
 @router.get("/{audit_id}/fix-prompt", response_model=DeveloperFixPrompt, tags=["Audits"])
 async def get_developer_fix_prompt(audit_id: str):
     """Generate a structured developer fix prompt for coding tools (Antigravity, Cursor, Claude)."""
@@ -151,4 +188,5 @@ async def analyze_audit_issue(audit_id: str, issue_id: str):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "AI_PROVIDER_ERROR", "message": str(err)}
         )
+
 

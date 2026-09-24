@@ -362,6 +362,42 @@ class AuditEngineService:
     def get_audit(self, audit_id: str) -> Optional[AuditResult]:
         return self._audits_db.get(audit_id)
 
+    async def retest_audit(self, audit_id: str) -> Tuple[AuditResult, AuditComparison]:
+        baseline = self.get_audit(audit_id)
+        if not baseline:
+            raise KeyError(f"Baseline audit with ID '{audit_id}' not found.")
+
+        # Preserve baseline audit's viewport configuration
+        viewports: List[str] = []
+        if baseline.desktop:
+            viewports.append("desktop")
+        if baseline.mobile:
+            viewports.append("mobile")
+        if not viewports:
+            viewports = ["desktop", "mobile"]
+
+        target_url = baseline.target_url or baseline.url
+        retest_request = CreateAuditRequest(
+            url=target_url,
+            viewports=viewports,
+            baseline_audit_id=audit_id
+        )
+
+        retest_audit_result = await self.create_audit(retest_request)
+        comparison = self.compare_audits(baseline_id=audit_id, new_id=retest_audit_result.audit_id)
+        if not comparison:
+            comparison = AuditComparison(
+                baseline_audit_id=audit_id,
+                new_audit_id=retest_audit_result.audit_id,
+                created_at=datetime.now(timezone.utc),
+                fixed_issues=[],
+                remaining_issues=[],
+                new_issues=[],
+                regressions=[]
+            )
+
+        return retest_audit_result, comparison
+
     def compare_audits(self, baseline_id: str, new_id: str) -> Optional[AuditComparison]:
         baseline = self._audits_db.get(baseline_id)
         new_audit = self._audits_db.get(new_id)
@@ -389,3 +425,4 @@ class AuditEngineService:
 
 # Global singleton instance for service injection
 audit_engine = AuditEngineService()
+

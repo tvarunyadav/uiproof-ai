@@ -174,3 +174,9 @@ export interface IssueAnalysisResponse {
   analysis: AIAnalysisDetails;
 }
 
+export interface RetestAuditResponse {
+  retest_audit: AuditResult;
+  comparison: AuditComparison;
+}
+
+

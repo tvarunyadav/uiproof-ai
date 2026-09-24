@@ -5,7 +5,7 @@ import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Badge } from './components/ui/Badge';
 import { AuditResult, DeveloperFixPrompt, AuditComparison, ViewportAuditResult, Issue, IssueSeverity, IssueAnalysisResponse } from './types/audit';
-import { createAudit, getFixPrompt, compareAudits, getArtifactUrl, analyzeIssue } from './services/api';
+import { createAudit, getFixPrompt, compareAudits, getArtifactUrl, analyzeIssue, retestAudit } from './services/api';
 import {
   Globe,
   Play,
@@ -29,14 +29,17 @@ import {
   FileText,
   AlertCircle,
   Copy,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [url, setUrl] = useState('');
   const [selectedViewports, setSelectedViewports] = useState<string[]>(['desktop', 'mobile']);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRetesting, setIsRetesting] = useState(false);
   const [activeTab, setActiveTab] = useState<'audit' | 'compare' | 'prompt'>('audit');
+  const [compareCategoryTab, setCompareCategoryTab] = useState<'fixed' | 'remaining' | 'new'>('remaining');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<'all' | IssueSeverity>('all');
   const [expandedIssueIds, setExpandedIssueIds] = useState<Record<string, boolean>>({});
@@ -69,6 +72,40 @@ export const App: React.FC = () => {
       ...prev,
       [issueId]: !prev[issueId],
     }));
+  };
+
+  const handleRetestApplication = async () => {
+    if (!currentAudit || isRetesting || isLoading) return;
+    setIsRetesting(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await retestAudit(currentAudit.audit_id);
+      setBaselineAudit(currentAudit);
+      setCurrentAudit(res.retest_audit);
+      setComparisonResult(res.comparison);
+      setActiveTab('compare');
+
+      if (res.comparison.fixed_issues.length > 0) {
+        setCompareCategoryTab('fixed');
+      } else if (res.comparison.remaining_issues.length > 0) {
+        setCompareCategoryTab('remaining');
+      } else {
+        setCompareCategoryTab('new');
+      }
+
+      // Auto-expand issue details for retest audit
+      const initialExpanded: Record<string, boolean> = {};
+      const allIssues = res.retest_audit.issues?.length > 0 ? res.retest_audit.issues : (res.retest_audit.findings || []);
+      allIssues.forEach((issue) => {
+        initialExpanded[issue.issue_id] = true;
+      });
+      setExpandedIssueIds(initialExpanded);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Retest failed. Ensure backend API is running.');
+    } finally {
+      setIsRetesting(false);
+    }
   };
 
   const handleAnalyzeIssue = async (issueId: string) => {
@@ -617,6 +654,18 @@ export const App: React.FC = () => {
             </div>
           )}
 
+          {isRetesting && (
+            <div className="mt-4 p-4 rounded bg-accent/5 border border-accent/20 text-accent text-xs font-mono flex items-center gap-3 animate-pulse">
+              <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-accent" />
+              <div>
+                <span className="font-semibold">Re-running Playwright audit...</span>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  Re-testing {currentAudit?.target_url || currentAudit?.url} against baseline audit ({currentAudit?.audit_id.slice(0, 8)}).
+                </p>
+              </div>
+            </div>
+          )}
+
           {errorMessage && (
             <div className="mt-4 p-3 rounded bg-status-error/10 border border-status-error/20 text-status-error text-xs font-mono flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -633,6 +682,12 @@ export const App: React.FC = () => {
                 <span>AUDIT SUMMARY</span>
                 <span>•</span>
                 <span className="text-[11px]">ID: {currentAudit.audit_id.slice(0, 8)}</span>
+                {baselineAudit && (
+                  <>
+                    <span>•</span>
+                    <span className="text-[11px] text-accent">Baseline: {baselineAudit.audit_id.slice(0, 8)}</span>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <a
@@ -650,7 +705,7 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-3 text-xs flex-wrap">
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-background border border-border">
                 <span className="text-text-muted">Total:</span>
                 <span className="font-bold text-text-primary">{currentAudit.stats?.total_issues ?? allIssues.length}</span>
@@ -671,6 +726,21 @@ export const App: React.FC = () => {
                 <span>Low:</span>
                 <span className="font-bold">{currentAudit.stats?.low_count ?? 0}</span>
               </div>
+
+              {/* Retest Application Action Button */}
+              {currentAudit.status === 'completed' && (
+                <Button
+                  onClick={handleRetestApplication}
+                  isLoading={isRetesting}
+                  disabled={isRetesting || isLoading}
+                  variant="outline"
+                  size="sm"
+                  className="font-mono text-xs flex items-center gap-1.5 border-accent/40 text-accent hover:bg-accent/10 ml-2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRetesting ? 'animate-spin' : ''}`} />
+                  {isRetesting ? 'Re-running Playwright audit...' : 'Retest Application'}
+                </Button>
+              )}
             </div>
           </Card>
         )}
@@ -900,30 +970,221 @@ export const App: React.FC = () => {
 
         {/* Tab Content 3: Before / After Comparison */}
         {activeTab === 'compare' && comparisonResult && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="flex flex-col gap-3 border-status-success/30 bg-status-success/5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-medium text-status-success">FIXED ISSUES</span>
-                <Badge variant="success">{comparisonResult.fixed_issues.length}</Badge>
+          <div className="flex flex-col gap-6">
+            {/* Comparison Summary Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg bg-surface-raised/40 border border-border font-mono text-xs">
+              <div className="flex items-center gap-2">
+                <GitCompare className="w-4 h-4 text-accent" />
+                <span className="font-semibold text-text-primary uppercase">Verification Flow:</span>
+                <span className="text-text-muted">
+                  Baseline ({comparisonResult.baseline_audit_id.slice(0, 8)}) → Retest ({comparisonResult.new_audit_id.slice(0, 8)})
+                </span>
               </div>
-              <p className="text-xs text-text-muted">Resolved between baseline and re-test audit.</p>
-            </Card>
+              <span className="text-[11px] text-text-muted">
+                Deterministic ID Matching ({comparisonResult.fixed_issues.length + comparisonResult.remaining_issues.length + comparisonResult.new_issues.length} total issues analyzed)
+              </span>
+            </div>
 
-            <Card className="flex flex-col gap-3 border-status-warning/30 bg-status-warning/5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-medium text-status-warning">REMAINING ISSUES</span>
-                <Badge variant="high">{comparisonResult.remaining_issues.length}</Badge>
-              </div>
-              <p className="text-xs text-text-muted">Unresolved issues requiring attention.</p>
-            </Card>
+            {/* Category Cards (Clickable) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono">
+              <button
+                onClick={() => setCompareCategoryTab('fixed')}
+                className={`text-left p-4 rounded-lg border transition-colors flex flex-col gap-2 ${
+                  compareCategoryTab === 'fixed'
+                    ? 'border-status-success bg-status-success/15 ring-1 ring-status-success'
+                    : 'border-status-success/30 bg-status-success/5 hover:border-status-success/60'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-status-success">FIXED ISSUES</span>
+                  <Badge variant="success">{comparisonResult.fixed_issues.length}</Badge>
+                </div>
+                <p className="text-xs text-text-muted">Resolved between baseline and re-test audit.</p>
+              </button>
 
-            <Card className="flex flex-col gap-3 border-status-error/30 bg-status-error/5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-medium text-status-error">NEW ISSUES / REGRESSIONS</span>
-                <Badge variant="critical">{comparisonResult.new_issues.length}</Badge>
-              </div>
-              <p className="text-xs text-text-muted">Newly detected issues introduced post-fix.</p>
-            </Card>
+              <button
+                onClick={() => setCompareCategoryTab('remaining')}
+                className={`text-left p-4 rounded-lg border transition-colors flex flex-col gap-2 ${
+                  compareCategoryTab === 'remaining'
+                    ? 'border-status-warning bg-status-warning/15 ring-1 ring-status-warning'
+                    : 'border-status-warning/30 bg-status-warning/5 hover:border-status-warning/60'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-status-warning">REMAINING ISSUES</span>
+                  <Badge variant="high">{comparisonResult.remaining_issues.length}</Badge>
+                </div>
+                <p className="text-xs text-text-muted">Unresolved issues still detected on re-test.</p>
+              </button>
+
+              <button
+                onClick={() => setCompareCategoryTab('new')}
+                className={`text-left p-4 rounded-lg border transition-colors flex flex-col gap-2 ${
+                  compareCategoryTab === 'new'
+                    ? 'border-status-info bg-status-info/15 ring-1 ring-status-info'
+                    : 'border-status-info/30 bg-status-info/5 hover:border-status-info/60'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-status-info">NEW ISSUES</span>
+                  <Badge variant="neutral">{comparisonResult.new_issues.length}</Badge>
+                </div>
+                <p className="text-xs text-text-muted">Newly detected in retest but not in baseline.</p>
+              </button>
+            </div>
+
+            {/* Issue Cards for Selected Category */}
+            <div className="flex flex-col gap-4">
+              {compareCategoryTab === 'fixed' && (
+                <>
+                  <div className="flex items-center justify-between border-b border-border pb-2 font-mono">
+                    <span className="text-xs font-bold text-status-success uppercase flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-status-success" />
+                      Fixed Issues ({comparisonResult.fixed_issues.length})
+                    </span>
+                    <span className="text-[11px] text-text-muted">Not detected in retest</span>
+                  </div>
+                  {comparisonResult.fixed_issues.length === 0 ? (
+                    <Card className="py-8 text-center text-xs font-mono text-text-muted border-dashed">
+                      No fixed issues detected in retest.
+                    </Card>
+                  ) : (
+                    comparisonResult.fixed_issues.map((issue) => {
+                      const isExpanded = expandedIssueIds[issue.issue_id] ?? true;
+                      return (
+                        <Card key={issue.issue_id} className="flex flex-col gap-3 border-status-success/30 bg-status-success/5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                onClick={() => toggleIssueExpansion(issue.issue_id)}
+                                className="p-1 rounded hover:bg-background text-text-muted hover:text-text-primary transition-colors"
+                              >
+                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
+                              <Badge variant="success">FIXED</Badge>
+                              <span className="font-mono text-xs font-bold text-text-primary bg-background px-2 py-0.5 rounded border border-border">
+                                {issue.issue_id}
+                              </span>
+                              {issue.viewport && (
+                                <span className="px-2 py-0.5 rounded bg-background border border-border text-[10px] font-mono text-accent">
+                                  {issue.viewport.toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-mono text-status-success font-medium">Not detected in retest</span>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-text-primary">{issue.title}</h4>
+                            <p className="text-xs text-text-muted mt-1 leading-relaxed">{issue.description}</p>
+                          </div>
+                          {isExpanded && renderIssueEvidenceDetails(issue)}
+                        </Card>
+                      );
+                    })
+                  )}
+                </>
+              )}
+
+              {compareCategoryTab === 'remaining' && (
+                <>
+                  <div className="flex items-center justify-between border-b border-border pb-2 font-mono">
+                    <span className="text-xs font-bold text-status-warning uppercase flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-status-warning" />
+                      Remaining Issues ({comparisonResult.remaining_issues.length})
+                    </span>
+                    <span className="text-[11px] text-text-muted">Still detected in retest</span>
+                  </div>
+                  {comparisonResult.remaining_issues.length === 0 ? (
+                    <Card className="py-8 text-center text-xs font-mono text-text-muted border-dashed">
+                      No remaining issues found. All baseline issues resolved!
+                    </Card>
+                  ) : (
+                    comparisonResult.remaining_issues.map((issue) => {
+                      const isExpanded = expandedIssueIds[issue.issue_id] ?? true;
+                      return (
+                        <Card key={issue.issue_id} className="flex flex-col gap-3 border-status-warning/30 bg-status-warning/5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                onClick={() => toggleIssueExpansion(issue.issue_id)}
+                                className="p-1 rounded hover:bg-background text-text-muted hover:text-text-primary transition-colors"
+                              >
+                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
+                              <Badge variant="high">STILL DETECTED</Badge>
+                              <span className="font-mono text-xs font-bold text-text-primary bg-background px-2 py-0.5 rounded border border-border">
+                                {issue.issue_id}
+                              </span>
+                              {issue.viewport && (
+                                <span className="px-2 py-0.5 rounded bg-background border border-border text-[10px] font-mono text-accent">
+                                  {issue.viewport.toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-mono text-status-warning font-medium">Still detected</span>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-text-primary">{issue.title}</h4>
+                            <p className="text-xs text-text-muted mt-1 leading-relaxed">{issue.description}</p>
+                          </div>
+                          {isExpanded && renderIssueEvidenceDetails(issue)}
+                        </Card>
+                      );
+                    })
+                  )}
+                </>
+              )}
+
+              {compareCategoryTab === 'new' && (
+                <>
+                  <div className="flex items-center justify-between border-b border-border pb-2 font-mono">
+                    <span className="text-xs font-bold text-status-info uppercase flex items-center gap-1.5">
+                      <Bug className="w-4 h-4 text-status-info" />
+                      New Issues ({comparisonResult.new_issues.length})
+                    </span>
+                    <span className="text-[11px] text-text-muted">Detected in retest but not present in baseline</span>
+                  </div>
+                  {comparisonResult.new_issues.length === 0 ? (
+                    <Card className="py-8 text-center text-xs font-mono text-text-muted border-dashed">
+                      No new issues introduced in retest.
+                    </Card>
+                  ) : (
+                    comparisonResult.new_issues.map((issue) => {
+                      const isExpanded = expandedIssueIds[issue.issue_id] ?? true;
+                      return (
+                        <Card key={issue.issue_id} className="flex flex-col gap-3 border-status-info/30 bg-status-info/5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <button
+                                onClick={() => toggleIssueExpansion(issue.issue_id)}
+                                className="p-1 rounded hover:bg-background text-text-muted hover:text-text-primary transition-colors"
+                              >
+                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
+                              <Badge variant="neutral">NEW ISSUE</Badge>
+                              <span className="font-mono text-xs font-bold text-text-primary bg-background px-2 py-0.5 rounded border border-border">
+                                {issue.issue_id}
+                              </span>
+                              {issue.viewport && (
+                                <span className="px-2 py-0.5 rounded bg-background border border-border text-[10px] font-mono text-accent">
+                                  {issue.viewport.toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-mono text-status-info font-medium">Detected in retest but not present in baseline</span>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-text-primary">{issue.title}</h4>
+                            <p className="text-xs text-text-muted mt-1 leading-relaxed">{issue.description}</p>
+                          </div>
+                          {isExpanded && renderIssueEvidenceDetails(issue)}
+                        </Card>
+                      );
+                    })
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 

@@ -71,3 +71,9 @@ class DeveloperFixPrompt(BaseModel):
     target_issues: List[Issue]
     fix_prompt: str = Field(..., description="Context-rich prompt formatted for Antigravity, Cursor, Claude, or VS Code")
     suggested_files: List[str] = []
+
+
+class RetestAuditResponse(BaseModel):
+    retest_audit: AuditResult = Field(..., description="The newly executed retest audit result")
+    comparison: AuditComparison = Field(..., description="Deterministic comparison between baseline and retest audit")
+

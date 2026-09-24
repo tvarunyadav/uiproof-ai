@@ -35,6 +35,25 @@ def generate_stable_issue_id(category: str, selector: str, title: str) -> str:
     return f"ISSUE-{category.upper()[:3]}-{hash_digest}"
 
 
+import re
+
+
+def normalize_console_target(target: str) -> str:
+    """
+    Normalizes console log strings by stripping dynamic timestamps,
+    hexadecimal memory addresses, and transient line/col markers before hashing.
+    """
+    normalized = target.strip().lower()
+    # Strip ISO timestamps or standard HH:MM:SS timestamps
+    normalized = re.sub(r"\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}(\.\d+)?(z|[+-]\d{2}:?\d{2})?", "[timestamp]", normalized)
+    normalized = re.sub(r"\b\d{2}:\d{2}:\d{2}(\.\d+)?\b", "[time]", normalized)
+    # Strip hex memory addresses like 0x7fa890b12
+    normalized = re.sub(r"\b0x[0-9a-f]+\b", "[addr]", normalized)
+    # Strip line & column numbers in stack traces (e.g. app.js:123:45 -> app.js:[line])
+    normalized = re.sub(r":\d+:\d+\b", ":[line]", normalized)
+    return normalized
+
+
 def generate_deterministic_issue_id(rule_code: str, viewport: str, target: str = "") -> str:
     """
     Generates a human-readable deterministic Issue ID formatted like:
@@ -43,7 +62,8 @@ def generate_deterministic_issue_id(rule_code: str, viewport: str, target: str =
     clean_rule = rule_code.strip().upper().replace(" ", "-")
     clean_vp = viewport.strip().upper()
     if target:
-        hash_digest = hashlib.sha256(f"{clean_rule}|{clean_vp}|{target.strip().lower()}".encode("utf-8")).hexdigest()[:6].upper()
+        processed_target = normalize_console_target(target) if clean_rule in ("CONSOLE-ERROR", "CONSOLE") else target.strip().lower()
+        hash_digest = hashlib.sha256(f"{clean_rule}|{clean_vp}|{processed_target}".encode("utf-8")).hexdigest()[:6].upper()
         return f"UI-{clean_rule}-{clean_vp}-{hash_digest}"
     return f"UI-{clean_rule}-{clean_vp}"
 
