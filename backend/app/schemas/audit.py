@@ -23,6 +23,10 @@ class CreateAuditRequest(BaseModel):
         None,
         description="Optional baseline audit ID for before/after fix verification comparison"
     )
+    project_id: Optional[str] = Field(
+        None,
+        description="Optional project ID to associate this audit run with"
+    )
 
 
 class AuditSummaryStats(BaseModel):

@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from app.schemas.audit import (
     CreateAuditRequest,
@@ -12,9 +12,11 @@ from app.schemas.audit import (
     DeveloperFixPrompt,
     RetestAuditResponse,
 )
+from app.schemas.project import AuditSummaryItem
 from app.schemas.ai import IssueAnalysisResponse
 from app.services.ai.interface import AINotConfiguredError, AIProviderError
 from app.services.audit import audit_engine
+from app.services.project import project_service
 from app.utils.security import validate_and_sanitize_url
 
 router = APIRouter()
@@ -26,6 +28,14 @@ ARTIFACTS_BASE_DIR = Path(__file__).resolve().parents[4] / "artifacts"
 class AuditComparisonRequest(BaseModel):
     baseline_audit_id: str
     new_audit_id: str
+
+
+@router.get("", response_model=List[AuditSummaryItem], tags=["Audits"])
+async def list_all_audits():
+    """
+    List global lightweight audit history ordered newest first.
+    """
+    return project_service.list_all_audits()
 
 
 @router.post("", response_model=AuditResult, status_code=status.HTTP_201_CREATED, tags=["Audits"])

@@ -270,6 +270,7 @@ class AuditEngineService:
         self,
         audit_result: AuditResult,
         baseline_audit_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         db: Optional[Session] = None
     ) -> None:
         close_db = False
@@ -286,6 +287,7 @@ class AuditEngineService:
             if not audit_model:
                 audit_model = AuditModel(
                     audit_id=audit_result.audit_id,
+                    project_id=project_id,
                     target_url=audit_result.target_url or audit_result.url,
                     baseline_audit_id=baseline_audit_id,
                     status=status_str,
@@ -302,6 +304,8 @@ class AuditEngineService:
                 audit_model.status = status_str
                 if baseline_audit_id:
                     audit_model.baseline_audit_id = baseline_audit_id
+                if project_id:
+                    audit_model.project_id = project_id
                 audit_model.completed_at = audit_result.completed_at
                 audit_model.stats = stats_dict
                 audit_model.evidence = evidence_dict
@@ -582,7 +586,12 @@ class AuditEngineService:
                 stats=stats,
             )
 
-            self._save_audit_to_db(audit_result, baseline_audit_id=request.baseline_audit_id, db=db)
+            self._save_audit_to_db(
+                audit_result,
+                baseline_audit_id=request.baseline_audit_id,
+                project_id=request.project_id,
+                db=db
+            )
             return audit_result
 
         except Exception as err:
@@ -605,13 +614,33 @@ class AuditEngineService:
                 findings=[],
                 stats=AuditSummaryStats()
             )
-            self._save_audit_to_db(failed_result, baseline_audit_id=request.baseline_audit_id, db=db)
+            self._save_audit_to_db(
+                failed_result,
+                baseline_audit_id=request.baseline_audit_id,
+                project_id=request.project_id,
+                db=db
+            )
             return failed_result
 
     async def retest_audit(self, audit_id: str, db: Optional[Session] = None) -> Tuple[AuditResult, AuditComparison]:
         baseline = self.get_audit(audit_id, db=db)
         if not baseline:
             raise KeyError(f"Baseline audit with ID '{audit_id}' not found.")
+
+        # Determine baseline project_id if present
+        baseline_project_id = None
+        close_db = False
+        db_s = db
+        if db_s is None:
+            db_s = SessionLocal()
+            close_db = True
+        try:
+            baseline_model = db_s.query(AuditModel).filter_by(audit_id=audit_id).first()
+            if baseline_model and baseline_model.project_id:
+                baseline_project_id = baseline_model.project_id
+        finally:
+            if close_db:
+                db_s.close()
 
         # Preserve baseline audit's viewport configuration
         viewports: List[str] = []
@@ -626,7 +655,8 @@ class AuditEngineService:
         retest_request = CreateAuditRequest(
             url=target_url,
             viewports=viewports,
-            baseline_audit_id=audit_id
+            baseline_audit_id=audit_id,
+            project_id=baseline_project_id
         )
 
         retest_audit_result = await self.create_audit(retest_request, db=db)

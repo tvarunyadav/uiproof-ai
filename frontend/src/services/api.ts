@@ -1,4 +1,14 @@
-import { AuditResult, CreateAuditRequest, AuditComparison, DeveloperFixPrompt, IssueAnalysisResponse, RetestAuditResponse } from '../types/audit';
+import {
+  AuditResult,
+  CreateAuditRequest,
+  AuditComparison,
+  DeveloperFixPrompt,
+  IssueAnalysisResponse,
+  RetestAuditResponse,
+  Project,
+  CreateProjectRequest,
+  AuditSummaryItem,
+} from '../types/audit';
 
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const API_BASE_URL = RAW_BASE.endsWith('/api/v1') ? RAW_BASE : `${RAW_BASE}/api/v1`;
@@ -16,6 +26,55 @@ export async function checkBackendHealth(): Promise<{ status: string; service: s
   }
 }
 
+export async function listProjects(): Promise<Project[]> {
+  const response = await fetch(`${API_BASE_URL}/projects`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch projects (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function createProject(request: CreateProjectRequest): Promise<Project> {
+  const response = await fetch(`${API_BASE_URL}/projects`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ detail: `Failed to create project (${response.status})` }));
+    throw new Error(errorData.detail || `Failed to create project with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function getProject(projectId: string): Promise<Project> {
+  const response = await fetch(`${API_BASE_URL}/projects/${projectId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch project ${projectId} (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function listProjectAudits(projectId: string): Promise<AuditSummaryItem[]> {
+  const response = await fetch(`${API_BASE_URL}/projects/${projectId}/audits`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audits for project ${projectId} (${response.status})`);
+  }
+  return response.json();
+}
+
+export async function listAudits(): Promise<AuditSummaryItem[]> {
+  const response = await fetch(`${API_BASE_URL}/audits`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch global audit history (${response.status})`);
+  }
+  return response.json();
+}
+
 export async function createAudit(request: CreateAuditRequest): Promise<AuditResult> {
   let response: Response;
   try {
@@ -28,6 +87,7 @@ export async function createAudit(request: CreateAuditRequest): Promise<AuditRes
         url: request.url,
         viewports: request.viewports || ['desktop', 'mobile'],
         baseline_audit_id: request.baseline_audit_id,
+        project_id: request.project_id,
       }),
     });
   } catch (netErr: any) {

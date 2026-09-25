@@ -4,15 +4,30 @@ from sqlalchemy.orm import relationship
 from app.db.session import Base
 
 
+class UserModel(Base):
+    __tablename__ = "users"
+
+    user_id = Column(String, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    projects = relationship("ProjectModel", back_populates="user", cascade="all, delete-orphan")
+
+
 class ProjectModel(Base):
     __tablename__ = "projects"
 
     project_id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     target_url = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
+    user = relationship("UserModel", back_populates="projects")
     audits = relationship(
         "AuditModel",
         back_populates="project",

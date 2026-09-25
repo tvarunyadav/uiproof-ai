@@ -1,11 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from './components/layout/Header';
 import { Card } from './components/ui/Card';
 import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Badge } from './components/ui/Badge';
-import { AuditResult, DeveloperFixPrompt, AuditComparison, ViewportAuditResult, Issue, IssueSeverity, IssueAnalysisResponse } from './types/audit';
-import { createAudit, getFixPrompt, compareAudits, getArtifactUrl, analyzeIssue, retestAudit } from './services/api';
+import {
+  AuditResult,
+  DeveloperFixPrompt,
+  AuditComparison,
+  ViewportAuditResult,
+  Issue,
+  IssueSeverity,
+  IssueAnalysisResponse,
+  Project,
+  AuditSummaryItem,
+} from './types/audit';
+import {
+  createAudit,
+  getFixPrompt,
+  compareAudits,
+  getArtifactUrl,
+  analyzeIssue,
+  retestAudit,
+  listProjects,
+  listProjectAudits,
+  listAudits,
+  getAudit,
+} from './services/api';
+import { CreateProjectModal } from './components/CreateProjectModal';
+import { AuditHistorySidebar } from './components/AuditHistorySidebar';
 import {
   Globe,
   Play,
@@ -30,7 +53,7 @@ import {
   AlertCircle,
   Copy,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -56,6 +79,84 @@ export const App: React.FC = () => {
   const [issueAnalyses, setIssueAnalyses] = useState<Record<string, IssueAnalysisResponse>>({});
   const [issueAnalysisErrors, setIssueAnalysisErrors] = useState<Record<string, string>>({});
   const [copiedPromptIssueId, setCopiedPromptIssueId] = useState<string | null>(null);
+
+  // Milestone 6E: Project & History State
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [historyAudits, setHistoryAudits] = useState<AuditSummaryItem[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+
+  // Initial load of projects and history
+  useEffect(() => {
+    loadProjects();
+    loadHistory();
+  }, []);
+
+  useEffect(() => {
+    if (selectedProject) {
+      loadHistory(selectedProject.project_id);
+      if (!url.trim() && selectedProject.target_url) {
+        setUrl(selectedProject.target_url);
+      }
+    } else {
+      loadHistory();
+    }
+  }, [selectedProject]);
+
+  const loadProjects = async () => {
+    try {
+      const projs = await listProjects();
+      setProjects(projs);
+    } catch (err) {
+      console.warn('Could not load projects:', err);
+    }
+  };
+
+  const loadHistory = async (projectId?: string) => {
+    try {
+      const items = projectId ? await listProjectAudits(projectId) : await listAudits();
+      setHistoryAudits(items);
+    } catch (err) {
+      console.warn('Could not load audit history:', err);
+    }
+  };
+
+  const handleProjectCreated = (newProject: Project) => {
+    setProjects((prev) => [newProject, ...prev]);
+    setSelectedProject(newProject);
+    setUrl(newProject.target_url);
+    loadHistory(newProject.project_id);
+  };
+
+  const handleSelectHistoricalAudit = async (auditId: string) => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const audit = await getAudit(auditId);
+      setCurrentAudit(audit);
+      setActiveTab('audit');
+      setSeverityFilter('all');
+
+      const initialExpanded: Record<string, boolean> = {};
+      const allIssues = audit.issues?.length > 0 ? audit.issues : (audit.findings || []);
+      allIssues.forEach((issue) => {
+        initialExpanded[issue.issue_id] = true;
+      });
+      setExpandedIssueIds(initialExpanded);
+
+      try {
+        const prompt = await getFixPrompt(audit.audit_id);
+        setFixPromptData(prompt);
+      } catch {
+        setFixPromptData(null);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to load historical audit.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const toggleViewport = (vp: string) => {
     if (selectedViewports.includes(vp)) {
@@ -101,6 +202,10 @@ export const App: React.FC = () => {
         initialExpanded[issue.issue_id] = true;
       });
       setExpandedIssueIds(initialExpanded);
+
+      // Refresh history & project list
+      loadHistory(selectedProject?.project_id);
+      loadProjects();
     } catch (err: any) {
       setErrorMessage(err.message || 'Retest failed. Ensure backend API is running.');
     } finally {
@@ -162,6 +267,7 @@ export const App: React.FC = () => {
       const result = await createAudit({
         url: targetUrl,
         viewports: selectedViewports,
+        project_id: selectedProject?.project_id,
       });
 
       setCurrentAudit(result);
@@ -190,6 +296,10 @@ export const App: React.FC = () => {
           console.warn('Comparison failed:', compErr);
         }
       }
+
+      // Refresh history & project list
+      loadHistory(selectedProject?.project_id);
+      loadProjects();
     } catch (err: any) {
       setErrorMessage(err.message || 'Audit execution failed. Ensure backend API is running.');
     } finally {
@@ -577,7 +687,14 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background text-text-primary flex flex-col font-sans">
-      <Header />
+      <Header
+        projects={projects}
+        selectedProject={selectedProject}
+        onSelectProject={setSelectedProject}
+        onOpenCreateProjectModal={() => setIsCreateProjectOpen(true)}
+        historyCount={historyAudits.length}
+        onOpenHistory={() => setIsHistoryOpen((prev) => !prev)}
+      />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex flex-col gap-8">
         {/* URL Entry & Test Config Bar */}
@@ -1231,6 +1348,26 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Audit History Sidebar Drawer */}
+      <AuditHistorySidebar
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        audits={historyAudits}
+        currentAuditId={currentAudit?.audit_id || null}
+        onSelectAudit={(auditId) => {
+          handleSelectHistoricalAudit(auditId);
+          setIsHistoryOpen(false);
+        }}
+        projectName={selectedProject ? selectedProject.name : undefined}
+      />
+
+      {/* Create Project Modal Dialog */}
+      <CreateProjectModal
+        isOpen={isCreateProjectOpen}
+        onClose={() => setIsCreateProjectOpen(false)}
+        onProjectCreated={handleProjectCreated}
+      />
     </div>
   );
 };

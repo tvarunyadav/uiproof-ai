@@ -138,6 +138,33 @@ export interface CreateAuditRequest {
   url: string;
   viewports?: string[];
   baseline_audit_id?: string;
+  project_id?: string;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  target_url: string;
+}
+
+export interface Project {
+  project_id: string;
+  name: string;
+  target_url: string;
+  created_at: string;
+  audit_count: number;
+}
+
+export interface AuditSummaryItem {
+  audit_id: string;
+  project_id?: string;
+  target_url: string;
+  status: AuditStatus;
+  created_at: string;
+  completed_at?: string;
+  total_issues: number;
+  critical_count: number;
+  high_count: number;
+  baseline_audit_id?: string;
 }
 
 export interface AuditComparison {
