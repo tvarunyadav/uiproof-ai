@@ -1,4 +1,4 @@
-import pytest, sys, os
+import pytest, pytest_asyncio, sys, os
 from httpx import AsyncClient, ASGITransport
 
 # Ensure app package is importable in tests
@@ -35,7 +35,7 @@ def db_session():
         session.close()
         Base.metadata.drop_all(bind=engine)
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def async_client(db_session):
     def override_get_db():
         try:
