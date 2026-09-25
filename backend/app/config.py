@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: str = ""
 
-    # Future Database
+    # Database Configuration
+    DATABASE_URL: str = "sqlite:///./uiproof.db"
     POSTGRES_URI: str = "postgresql://postgres:postgres@localhost:5432/uiproof_ai"
 
     model_config = SettingsConfigDict(
