@@ -27,11 +27,10 @@ from app.schemas.evidence import (
 from app.services.browser.interface import BaseBrowserRunner
 from app.utils.security import validate_and_sanitize_url
 
-logger = logging.getLogger("uiproof.browser")
-logging.basicConfig(level=logging.INFO)
+from app.config import settings
 
-# Base directory for artifacts
-ARTIFACTS_DIR = Path(__file__).resolve().parents[3] / "artifacts"
+logger = logging.getLogger("uiproof.browser")
+logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
 
 
 class PlaywrightBrowserRunner(BaseBrowserRunner):
@@ -42,7 +41,7 @@ class PlaywrightBrowserRunner(BaseBrowserRunner):
     """
 
     def __init__(self, artifacts_base_dir: Optional[Path] = None, timeout_ms: int = 30000):
-        self.artifacts_dir = artifacts_base_dir or ARTIFACTS_DIR
+        self.artifacts_dir = artifacts_base_dir or settings.artifacts_path
         self.timeout_ms = timeout_ms
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 

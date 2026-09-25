@@ -22,11 +22,12 @@ from app.services.auth import get_current_user_dep
 from app.db.models import UserModel
 from app.db.session import get_db
 from app.utils.security import validate_and_sanitize_url
+from app.config import settings
 
 router = APIRouter()
 
 # Path to backend/artifacts directory
-ARTIFACTS_BASE_DIR = Path(__file__).resolve().parents[4] / "artifacts"
+ARTIFACTS_BASE_DIR = settings.artifacts_path
 
 
 class AuditComparisonRequest(BaseModel):
