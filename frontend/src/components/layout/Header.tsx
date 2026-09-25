@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, Activity, Terminal, History } from 'lucide-react';
+import { ShieldCheck, Activity, History, User as UserIcon, LogOut } from 'lucide-react';
 import { checkBackendHealth } from '../../services/api';
 import { Project } from '../../types/audit';
+import { User } from '../../types/auth';
 import { ProjectSelector } from '../ProjectSelector';
 
 interface HeaderProps {
@@ -11,6 +12,8 @@ interface HeaderProps {
   onOpenCreateProjectModal?: () => void;
   onOpenHistory?: () => void;
   historyCount?: number;
+  currentUser?: User | null;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -20,6 +23,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCreateProjectModal,
   onOpenHistory,
   historyCount = 0,
+  currentUser = null,
+  onLogout,
 }) => {
   const [backendStatus, setBackendStatus] = useState<'online' | 'offline' | 'checking'>('checking');
 
@@ -75,7 +80,7 @@ export const Header: React.FC<HeaderProps> = ({
           {backendStatus === 'online' && (
             <span className="flex items-center gap-1.5 text-status-success font-mono font-medium">
               <span className="w-1.5 h-1.5 rounded-full bg-status-success animate-pulse" />
-              Online (v0.1.0)
+              Online
             </span>
           )}
           {backendStatus === 'offline' && (
@@ -92,15 +97,24 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        <a
-          href="/docs"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1 text-text-muted hover:text-text-primary transition-colors font-mono"
-        >
-          <Terminal className="w-3.5 h-3.5" />
-          Docs
-        </a>
+        {currentUser && (
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300">
+              <UserIcon className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="font-mono text-[11px] truncate max-w-[120px] sm:max-w-[160px]">{currentUser.email}</span>
+            </div>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                title="Sign Out"
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-400 hover:border-rose-900/50 transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5 text-slate-400 hover:text-rose-400" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

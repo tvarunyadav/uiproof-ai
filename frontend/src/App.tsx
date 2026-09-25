@@ -15,6 +15,7 @@ import {
   Project,
   AuditSummaryItem,
 } from './types/audit';
+import { User } from './types/auth';
 import {
   createAudit,
   getFixPrompt,
@@ -26,9 +27,13 @@ import {
   listProjectAudits,
   listAudits,
   getAudit,
+  getMeProfile,
+  logoutUser,
+  ApiError,
 } from './services/api';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { AuditHistorySidebar } from './components/AuditHistorySidebar';
+import { AuthContainer } from './components/auth/AuthContainer';
 import {
   Globe,
   Play,
@@ -57,6 +62,11 @@ import {
 } from 'lucide-react';
 
 export const App: React.FC = () => {
+  // Milestone 7F: Auth & User Session State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authStatus, setAuthStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [url, setUrl] = useState('');
   const [selectedViewports, setSelectedViewports] = useState<string[]>(['desktop', 'mobile']);
   const [isLoading, setIsLoading] = useState(false);
@@ -87,28 +97,100 @@ export const App: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
 
-  // Initial load of projects and history
+  // Session restoration on initial mount
   useEffect(() => {
-    loadProjects();
-    loadHistory();
+    const token = localStorage.getItem('uiproof_token');
+    if (!token) {
+      setAuthStatus('unauthenticated');
+      return;
+    }
+
+    getMeProfile()
+      .then((user) => {
+        setCurrentUser(user);
+        setAuthStatus('authenticated');
+      })
+      .catch((err) => {
+        localStorage.removeItem('uiproof_token');
+        setCurrentUser(null);
+        setAuthStatus('unauthenticated');
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthError('Your session has expired. Please log in again.');
+        }
+      });
   }, []);
 
+  // Load projects & history when authenticated or selectedProject changes
   useEffect(() => {
-    if (selectedProject) {
-      loadHistory(selectedProject.project_id);
-      if (!url.trim() && selectedProject.target_url) {
-        setUrl(selectedProject.target_url);
+    if (authStatus === 'authenticated') {
+      loadProjects();
+      if (selectedProject) {
+        loadHistory(selectedProject.project_id);
+        if (!url.trim() && selectedProject.target_url) {
+          setUrl(selectedProject.target_url);
+        }
+      } else {
+        loadHistory();
       }
-    } else {
-      loadHistory();
     }
-  }, [selectedProject]);
+  }, [authStatus, selectedProject]);
+
+  const handleSessionExpired = (msg = 'Your session has expired. Please log in again.') => {
+    localStorage.removeItem('uiproof_token');
+    setCurrentUser(null);
+    setProjects([]);
+    setSelectedProject(null);
+    setHistoryAudits([]);
+    setCurrentAudit(null);
+    setBaselineAudit(null);
+    setComparisonResult(null);
+    setFixPromptData(null);
+    setIssueAnalyses({});
+    setIssueAnalysisErrors({});
+    setErrorMessage(null);
+    setUrl('');
+    setAuthError(msg);
+    setAuthStatus('unauthenticated');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch {
+      // Ignore network errors on logout
+    }
+    localStorage.removeItem('uiproof_token');
+    setCurrentUser(null);
+    setProjects([]);
+    setSelectedProject(null);
+    setHistoryAudits([]);
+    setCurrentAudit(null);
+    setBaselineAudit(null);
+    setComparisonResult(null);
+    setFixPromptData(null);
+    setIssueAnalyses({});
+    setIssueAnalysisErrors({});
+    setErrorMessage(null);
+    setUrl('');
+    setAuthError(null);
+    setAuthStatus('unauthenticated');
+  };
+
+  const handleAuthSuccess = (user: User) => {
+    setCurrentUser(user);
+    setAuthError(null);
+    setAuthStatus('authenticated');
+  };
 
   const loadProjects = async () => {
     try {
       const projs = await listProjects();
       setProjects(projs);
-    } catch (err) {
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       console.warn('Could not load projects:', err);
     }
   };
@@ -117,7 +199,11 @@ export const App: React.FC = () => {
     try {
       const items = projectId ? await listProjectAudits(projectId) : await listAudits();
       setHistoryAudits(items);
-    } catch (err) {
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       console.warn('Could not load audit history:', err);
     }
   };
@@ -152,6 +238,10 @@ export const App: React.FC = () => {
         setFixPromptData(null);
       }
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setErrorMessage(err.message || 'Failed to load historical audit.');
     } finally {
       setIsLoading(false);
@@ -207,6 +297,10 @@ export const App: React.FC = () => {
       loadHistory(selectedProject?.project_id);
       loadProjects();
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setErrorMessage(err.message || 'Retest failed. Ensure backend API is running.');
     } finally {
       setIsRetesting(false);
@@ -229,6 +323,10 @@ export const App: React.FC = () => {
         [issueId]: res,
       }));
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setIssueAnalysisErrors((prev) => ({
         ...prev,
         [issueId]: err.message || 'Failed to analyze issue.',
@@ -301,6 +399,10 @@ export const App: React.FC = () => {
       loadHistory(selectedProject?.project_id);
       loadProjects();
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setErrorMessage(err.message || 'Audit execution failed. Ensure backend API is running.');
     } finally {
       setIsLoading(false);
@@ -685,6 +787,32 @@ export const App: React.FC = () => {
     ? allIssues
     : allIssues.filter((i) => i.severity.toLowerCase() === severityFilter.toLowerCase());
 
+  if (authStatus === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center font-sans antialiased">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shadow-inner">
+            <ShieldCheck className="w-6 h-6" />
+          </div>
+          <span className="font-bold text-lg tracking-tight text-white">UIProof AI</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-400 font-mono">
+          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+          <span>Restoring user session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus === 'unauthenticated') {
+    return (
+      <AuthContainer
+        onSuccess={handleAuthSuccess}
+        externalError={authError}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-text-primary flex flex-col font-sans">
       <Header
@@ -694,6 +822,8 @@ export const App: React.FC = () => {
         onOpenCreateProjectModal={() => setIsCreateProjectOpen(true)}
         historyCount={historyAudits.length}
         onOpenHistory={() => setIsHistoryOpen((prev) => !prev)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 flex flex-col gap-8">
