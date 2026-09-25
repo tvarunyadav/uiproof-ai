@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple, Set
 
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, init_db
-from app.db.models import AuditModel, IssueModel, AIAnalysisModel
+from app.db.models import ProjectModel, AuditModel, IssueModel, AIAnalysisModel
 from app.schemas.ai import AIAnalysisDetails, IssueAnalysisResponse
 
 from app.schemas.audit import (
@@ -347,7 +347,7 @@ class AuditEngineService:
             if close_db:
                 db.close()
 
-    def get_audit(self, audit_id: str, db: Optional[Session] = None) -> Optional[AuditResult]:
+    def get_audit(self, audit_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Optional[AuditResult]:
         close_db = False
         if db is None:
             db = SessionLocal()
@@ -356,6 +356,12 @@ class AuditEngineService:
         try:
             audit_model = db.query(AuditModel).filter_by(audit_id=audit_id).first()
             if audit_model:
+                # Ownership check: If audit belongs to a project owned by another user, return None (404)
+                if audit_model.project_id and user_id:
+                    proj = db.query(ProjectModel).filter_by(project_id=audit_model.project_id).first()
+                    if proj and proj.user_id and proj.user_id != user_id:
+                        return None
+
                 issues = []
                 for i in audit_model.issues:
                     cat = IssueCategory(i.category) if i.category in IssueCategory._value2member_map_ else i.category
@@ -431,13 +437,18 @@ class AuditEngineService:
             if close_db:
                 db.close()
 
-    def get_ai_analysis(self, audit_id: str, issue_id: str, db: Optional[Session] = None) -> Optional[AIAnalysisDetails]:
+    def get_ai_analysis(self, audit_id: str, issue_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Optional[AIAnalysisDetails]:
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
 
         try:
+            if user_id:
+                audit = self.get_audit(audit_id, user_id=user_id, db=db)
+                if not audit:
+                    return None
+
             analysis_model = (
                 db.query(AIAnalysisModel)
                 .filter_by(audit_id=audit_id, issue_id=issue_id)
@@ -462,8 +473,8 @@ class AuditEngineService:
             if close_db:
                 db.close()
 
-    async def analyze_issue(self, audit_id: str, issue_id: str, db: Optional[Session] = None) -> IssueAnalysisResponse:
-        audit = self.get_audit(audit_id, db=db)
+    async def analyze_issue(self, audit_id: str, issue_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> IssueAnalysisResponse:
+        audit = self.get_audit(audit_id, user_id=user_id, db=db)
         if not audit:
             raise KeyError(f"Audit with ID '{audit_id}' not found.")
 
@@ -473,7 +484,7 @@ class AuditEngineService:
             raise KeyError(f"Issue with ID '{issue_id}' not found in audit '{audit_id}'.")
 
         # 1. Check if AI analysis is already persisted in the database
-        existing_analysis = self.get_ai_analysis(audit_id=audit_id, issue_id=issue_id, db=db)
+        existing_analysis = self.get_ai_analysis(audit_id=audit_id, issue_id=issue_id, user_id=user_id, db=db)
         if existing_analysis:
             causes_str = "\n".join(f"- {c}" for c in existing_analysis.likely_causes) if existing_analysis.likely_causes else "N/A"
             target_issue.root_cause_analysis = f"{existing_analysis.summary}\n\nLikely Causes:\n{causes_str}"
@@ -533,7 +544,14 @@ class AuditEngineService:
             analysis=analysis_details
         )
 
-    async def create_audit(self, request: CreateAuditRequest, db: Optional[Session] = None) -> AuditResult:
+    async def create_audit(self, request: CreateAuditRequest, user_id: Optional[str] = None, db: Optional[Session] = None) -> AuditResult:
+        # Verify target project ownership if project_id is specified
+        if request.project_id:
+            from app.services.project import project_service
+            proj = project_service.get_project(request.project_id, user_id=user_id, db=db)
+            if not proj:
+                raise KeyError(f"Project with ID '{request.project_id}' not found.")
+
         audit_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc)
 
@@ -595,6 +613,8 @@ class AuditEngineService:
             return audit_result
 
         except Exception as err:
+            if isinstance(err, KeyError):
+                raise err
             import traceback
             tb_str = traceback.format_exc()
             logger.error(f"Audit failure for ID {audit_id}:\n{tb_str}")
@@ -622,8 +642,8 @@ class AuditEngineService:
             )
             return failed_result
 
-    async def retest_audit(self, audit_id: str, db: Optional[Session] = None) -> Tuple[AuditResult, AuditComparison]:
-        baseline = self.get_audit(audit_id, db=db)
+    async def retest_audit(self, audit_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Tuple[AuditResult, AuditComparison]:
+        baseline = self.get_audit(audit_id, user_id=user_id, db=db)
         if not baseline:
             raise KeyError(f"Baseline audit with ID '{audit_id}' not found.")
 
@@ -659,8 +679,8 @@ class AuditEngineService:
             project_id=baseline_project_id
         )
 
-        retest_audit_result = await self.create_audit(retest_request, db=db)
-        comparison = self.compare_audits(baseline_id=audit_id, new_id=retest_audit_result.audit_id, db=db)
+        retest_audit_result = await self.create_audit(retest_request, user_id=user_id, db=db)
+        comparison = self.compare_audits(baseline_id=audit_id, new_id=retest_audit_result.audit_id, user_id=user_id, db=db)
         if not comparison:
             comparison = AuditComparison(
                 baseline_audit_id=audit_id,
@@ -674,9 +694,9 @@ class AuditEngineService:
 
         return retest_audit_result, comparison
 
-    def compare_audits(self, baseline_id: str, new_id: str, db: Optional[Session] = None) -> Optional[AuditComparison]:
-        baseline = self.get_audit(baseline_id, db=db)
-        new_audit = self.get_audit(new_id, db=db)
+    def compare_audits(self, baseline_id: str, new_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Optional[AuditComparison]:
+        baseline = self.get_audit(baseline_id, user_id=user_id, db=db)
+        new_audit = self.get_audit(new_id, user_id=user_id, db=db)
 
         if not baseline or not new_audit:
             return None
@@ -697,6 +717,7 @@ class AuditEngineService:
             new_issues=new_issues,
             regressions=[]
         )
+
 
 
 # Global singleton instance for service injection

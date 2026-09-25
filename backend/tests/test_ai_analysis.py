@@ -12,7 +12,7 @@ from app.services.ai.openai_provider import OpenAILLMProvider
 
 import uuid
 
-def setup_sample_audit():
+def setup_sample_audit(db=None):
     """Helper to populate in-memory audit DB with a sample audit and deterministic issue."""
     audit_id = f"test-audit-ai-{uuid.uuid4().hex[:8]}"
     issue = Issue(
@@ -47,14 +47,25 @@ def setup_sample_audit():
         stats=AuditSummaryStats(total_issues=1, high_count=1)
     )
     audit_engine._audits_db[audit_id] = audit
+    if db:
+        audit_engine._save_audit_to_db(audit, db=db)
     return audit_id, issue.issue_id
 
 
+
 @pytest.mark.asyncio
-async def test_ai_analysis_missing_api_key(async_client):
-    audit_id, issue_id = setup_sample_audit()
+async def test_ai_analysis_missing_api_key(async_client, db_session):
+    from app.db.models import UserModel
+    from app.services.auth import create_access_token, hash_password
+    user = UserModel(user_id="usr_ai_001", email="ai1@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(user.user_id, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    audit_id, issue_id = setup_sample_audit(db=db_session)
     with patch.object(audit_engine.ai_provider, "analyze_issue", side_effect=AINotConfiguredError("AI API key is not configured.")):
-        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze")
+        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze", headers=headers)
         assert res.status_code == 503
         data = res.json()
         assert data["detail"]["error"] == "AI_NOT_CONFIGURED"
@@ -62,10 +73,18 @@ async def test_ai_analysis_missing_api_key(async_client):
 
 
 @pytest.mark.asyncio
-async def test_ai_analysis_provider_error(async_client):
-    audit_id, issue_id = setup_sample_audit()
+async def test_ai_analysis_provider_error(async_client, db_session):
+    from app.db.models import UserModel
+    from app.services.auth import create_access_token, hash_password
+    user = UserModel(user_id="usr_ai_002", email="ai2@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(user.user_id, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    audit_id, issue_id = setup_sample_audit(db=db_session)
     with patch.object(audit_engine.ai_provider, "analyze_issue", side_effect=AIProviderError("LLM Provider connection timeout")):
-        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze")
+        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze", headers=headers)
         assert res.status_code == 503
         data = res.json()
         assert data["detail"]["error"] == "AI_PROVIDER_ERROR"
@@ -73,21 +92,45 @@ async def test_ai_analysis_provider_error(async_client):
 
 
 @pytest.mark.asyncio
-async def test_ai_analysis_unknown_audit(async_client):
-    res = await async_client.post("/api/v1/audits/nonexistent-audit-999/issues/UI-OVERFLOW-MOBILE/analyze")
+async def test_ai_analysis_unknown_audit(async_client, db_session):
+    from app.db.models import UserModel
+    from app.services.auth import create_access_token, hash_password
+    user = UserModel(user_id="usr_ai_003", email="ai3@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(user.user_id, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    res = await async_client.post("/api/v1/audits/nonexistent-audit-999/issues/UI-OVERFLOW-MOBILE/analyze", headers=headers)
     assert res.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_ai_analysis_unknown_issue(async_client):
-    audit_id, _ = setup_sample_audit()
-    res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/NONEXISTENT-ISSUE-ID/analyze")
+async def test_ai_analysis_unknown_issue(async_client, db_session):
+    from app.db.models import UserModel
+    from app.services.auth import create_access_token, hash_password
+    user = UserModel(user_id="usr_ai_004", email="ai4@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(user.user_id, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    audit_id, _ = setup_sample_audit(db=db_session)
+    res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/NONEXISTENT-ISSUE-ID/analyze", headers=headers)
     assert res.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_ai_analysis_success_mocked_provider(async_client):
-    audit_id, issue_id = setup_sample_audit()
+async def test_ai_analysis_success_mocked_provider(async_client, db_session):
+    from app.db.models import UserModel
+    from app.services.auth import create_access_token, hash_password
+    user = UserModel(user_id="usr_ai_005", email="ai5@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token(user.user_id, user.email)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    audit_id, issue_id = setup_sample_audit(db=db_session)
 
     mock_analysis = AIAnalysisDetails(
         summary="Horizontal overflow on mobile caused by fixed width element exceeding 390px viewport width.",
@@ -105,12 +148,13 @@ async def test_ai_analysis_success_mocked_provider(async_client):
     with patch.object(audit_engine.ai_provider, "analyze_issue", new_callable=AsyncMock) as mock_analyze:
         mock_analyze.return_value = mock_analysis
 
-        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze")
+        res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze", headers=headers)
         assert res.status_code == 200
 
         data = res.json()
         assert data["audit_id"] == audit_id
         assert data["issue_id"] == issue_id
+
 
         # Deterministic identity MUST remain unchanged
         assert data["issue"]["issue_id"] == "UI-OVERFLOW-MOBILE"

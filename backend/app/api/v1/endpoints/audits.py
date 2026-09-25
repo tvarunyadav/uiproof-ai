@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
+from sqlalchemy.orm import Session
 
 from app.schemas.audit import (
     CreateAuditRequest,
@@ -17,6 +18,9 @@ from app.schemas.ai import IssueAnalysisResponse
 from app.services.ai.interface import AINotConfiguredError, AIProviderError
 from app.services.audit import audit_engine
 from app.services.project import project_service
+from app.services.auth import get_current_user_dep
+from app.db.models import UserModel
+from app.db.session import get_db
 from app.utils.security import validate_and_sanitize_url
 
 router = APIRouter()
@@ -31,15 +35,22 @@ class AuditComparisonRequest(BaseModel):
 
 
 @router.get("", response_model=List[AuditSummaryItem], tags=["Audits"])
-async def list_all_audits():
+async def list_all_audits(
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
-    List global lightweight audit history ordered newest first.
+    List global lightweight audit history for current user ordered newest first.
     """
-    return project_service.list_all_audits()
+    return project_service.list_all_audits(user_id=current_user.user_id, db=db)
 
 
 @router.post("", response_model=AuditResult, status_code=status.HTTP_201_CREATED, tags=["Audits"])
-async def create_audit(request: CreateAuditRequest):
+async def create_audit(
+    request: CreateAuditRequest,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Trigger a new web application quality assurance audit.
     Executes Playwright Chromium, collects browser evidence across viewports, and produces structured issues.
@@ -48,7 +59,14 @@ async def create_audit(request: CreateAuditRequest):
     sanitized_url = validate_and_sanitize_url(request.url)
     request.url = sanitized_url
 
-    result = await audit_engine.create_audit(request)
+    try:
+        result = await audit_engine.create_audit(request, user_id=current_user.user_id, db=db)
+    except KeyError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err).strip("'\"")
+        )
+
     if result.status == "failed" and result.error_message:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -58,9 +76,13 @@ async def create_audit(request: CreateAuditRequest):
 
 
 @router.get("/{audit_id}", response_model=AuditResult, tags=["Audits"])
-async def get_audit(audit_id: str):
+async def get_audit(
+    audit_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """Retrieve audit result details by Audit ID."""
-    result = audit_engine.get_audit(audit_id)
+    result = audit_engine.get_audit(audit_id, user_id=current_user.user_id, db=db)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -70,13 +92,17 @@ async def get_audit(audit_id: str):
 
 
 @router.post("/{audit_id}/retest", response_model=RetestAuditResponse, status_code=status.HTTP_201_CREATED, tags=["Audits"])
-async def retest_audit(audit_id: str):
+async def retest_audit(
+    audit_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Re-run Playwright audit using the baseline audit's URL and viewports.
     Returns both the newly generated retest audit and deterministic comparison.
     """
     try:
-        retest_audit_result, comparison = await audit_engine.retest_audit(audit_id)
+        retest_audit_result, comparison = await audit_engine.retest_audit(audit_id, user_id=current_user.user_id, db=db)
         return RetestAuditResponse(
             retest_audit=retest_audit_result,
             comparison=comparison
@@ -89,11 +115,24 @@ async def retest_audit(audit_id: str):
 
 
 @router.get("/{audit_id}/artifacts/{artifact_id}", tags=["Audits"])
-async def get_audit_artifact(audit_id: str, artifact_id: str):
+async def get_audit_artifact(
+    audit_id: str,
+    artifact_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Safely serve generated audit artifacts (e.g. screenshots) from controlled directory.
-    Enforces strict path traversal prevention.
+    Enforces strict path traversal prevention and resource ownership verification.
     """
+    # 1. Authorize parent audit ownership
+    audit = audit_engine.get_audit(audit_id, user_id=current_user.user_id, db=db)
+    if not audit:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Audit with ID '{audit_id}' not found."
+        )
+
     # Sanitize inputs against path traversal attacks
     safe_audit_id = os.path.basename(audit_id.strip())
     safe_artifact_id = os.path.basename(artifact_id.strip())
@@ -129,14 +168,20 @@ async def get_audit_artifact(audit_id: str, artifact_id: str):
 
 
 @router.post("/compare", response_model=AuditComparison, tags=["Audits"])
-async def compare_audits(request: AuditComparisonRequest):
+async def compare_audits(
+    request: AuditComparisonRequest,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Compare a baseline audit with a post-fix re-test audit.
     Identifies fixed issues, remaining issues, new issues, and regressions.
     """
     comparison = audit_engine.compare_audits(
         baseline_id=request.baseline_audit_id,
-        new_id=request.new_audit_id
+        new_id=request.new_audit_id,
+        user_id=current_user.user_id,
+        db=db
     )
     if not comparison:
         raise HTTPException(
@@ -147,13 +192,20 @@ async def compare_audits(request: AuditComparisonRequest):
 
 
 @router.get("/{audit_id}/compare/{retest_id}", response_model=AuditComparison, tags=["Audits"])
-async def get_audit_comparison(audit_id: str, retest_id: str):
+async def get_audit_comparison(
+    audit_id: str,
+    retest_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Retrieve deterministic comparison between baseline audit (audit_id) and retest audit (retest_id).
     """
     comparison = audit_engine.compare_audits(
         baseline_id=audit_id,
-        new_id=retest_id
+        new_id=retest_id,
+        user_id=current_user.user_id,
+        db=db
     )
     if not comparison:
         raise HTTPException(
@@ -164,9 +216,13 @@ async def get_audit_comparison(audit_id: str, retest_id: str):
 
 
 @router.get("/{audit_id}/fix-prompt", response_model=DeveloperFixPrompt, tags=["Audits"])
-async def get_developer_fix_prompt(audit_id: str):
+async def get_developer_fix_prompt(
+    audit_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """Generate a structured developer fix prompt for coding tools (Antigravity, Cursor, Claude)."""
-    audit = audit_engine.get_audit(audit_id)
+    audit = audit_engine.get_audit(audit_id, user_id=current_user.user_id, db=db)
     if not audit:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -176,13 +232,18 @@ async def get_developer_fix_prompt(audit_id: str):
 
 
 @router.post("/{audit_id}/issues/{issue_id}/analyze", response_model=IssueAnalysisResponse, tags=["AI Analysis"])
-async def analyze_audit_issue(audit_id: str, issue_id: str):
+async def analyze_audit_issue(
+    audit_id: str,
+    issue_id: str,
+    current_user: UserModel = Depends(get_current_user_dep),
+    db: Session = Depends(get_db)
+):
     """
     Analyze an existing verified deterministic issue using the configured AI provider.
     Returns structured AI diagnostics, likely causes, constraints, and fix prompts.
     """
     try:
-        return await audit_engine.analyze_issue(audit_id=audit_id, issue_id=issue_id)
+        return await audit_engine.analyze_issue(audit_id=audit_id, issue_id=issue_id, user_id=current_user.user_id, db=db)
     except KeyError as err:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -198,5 +259,7 @@ async def analyze_audit_issue(audit_id: str, issue_id: str):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "AI_PROVIDER_ERROR", "message": str(err)}
         )
+
+
 
 

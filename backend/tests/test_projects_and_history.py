@@ -172,37 +172,57 @@ def test_legacy_unassigned_audits(db_session):
     assert any(a.audit_id == "legacy-audit-000" for a in default_audits)
 
 
-def test_project_endpoint_http_calls():
+def test_project_endpoint_http_calls(db_session):
     """
     Test 13, 14: Test HTTP endpoints POST /projects, GET /projects, GET /projects/{id}, GET /projects/{id}/audits, GET /audits.
     """
-    # Create project via API
-    res = client.post("/api/v1/projects", json={"name": "API Test Proj", "target_url": "https://apitest.com"})
-    assert res.status_code == 201
-    pdata = res.json()
-    assert pdata["name"] == "API Test Proj"
-    project_id = pdata["project_id"]
+    from app.db.session import get_db
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    app.dependency_overrides[get_db] = override_get_db
 
-    # Get project via API
-    res_get = client.get(f"/api/v1/projects/{project_id}")
-    assert res_get.status_code == 200
-    assert res_get.json()["name"] == "API Test Proj"
+    try:
+        from app.db.models import UserModel
+        from app.services.auth import create_access_token, hash_password
+        user = UserModel(user_id="usr_ph_001", email="ph@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+        db_session.add(user)
+        db_session.commit()
+        token = create_access_token(user.user_id, user.email)
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # List projects via API
-    res_list = client.get("/api/v1/projects")
-    assert res_list.status_code == 200
-    assert any(p["project_id"] == project_id for p in res_list.json())
+        # Create project via API
+        res = client.post("/api/v1/projects", json={"name": "API Test Proj", "target_url": "https://apitest.com"}, headers=headers)
+        assert res.status_code == 201
+        pdata = res.json()
+        assert pdata["name"] == "API Test Proj"
+        project_id = pdata["project_id"]
 
-    # List audits for project via API
-    res_audits = client.get(f"/api/v1/projects/{project_id}/audits")
-    assert res_audits.status_code == 200
-    assert isinstance(res_audits.json(), list)
+        # Get project via API
+        res_get = client.get(f"/api/v1/projects/{project_id}", headers=headers)
+        assert res_get.status_code == 200
+        assert res_get.json()["name"] == "API Test Proj"
 
-    # Global audits list via API
-    res_global = client.get("/api/v1/audits")
-    assert res_global.status_code == 200
-    assert isinstance(res_global.json(), list)
+        # List projects via API
+        res_list = client.get("/api/v1/projects", headers=headers)
+        assert res_list.status_code == 200
+        assert any(p["project_id"] == project_id for p in res_list.json())
 
-    # 404 for unknown project
-    res_404 = client.get("/api/v1/projects/non-existent-proj-id")
-    assert res_404.status_code == 404
+        # List audits for project via API
+        res_audits = client.get(f"/api/v1/projects/{project_id}/audits", headers=headers)
+        assert res_audits.status_code == 200
+        assert isinstance(res_audits.json(), list)
+
+        # Global audits list via API
+        res_global = client.get("/api/v1/audits", headers=headers)
+        assert res_global.status_code == 200
+        assert isinstance(res_global.json(), list)
+
+        # 404 for unknown project
+        res_404 = client.get("/api/v1/projects/non-existent-proj-id", headers=headers)
+        assert res_404.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+

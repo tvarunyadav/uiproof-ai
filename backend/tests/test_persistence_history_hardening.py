@@ -220,29 +220,68 @@ async def test_chained_retest_project_inheritance(db_session):
     assert r2_item.project_id == proj.project_id
 
 
-def test_invalid_project_and_audit_http_status_codes():
+def test_invalid_project_and_audit_http_status_codes(db_session):
     """
     Scenarios 10 & 11: HTTP endpoints return correct status codes for invalid IDs.
     """
-    # Invalid Project ID
-    res_proj = client.get("/api/v1/projects/non-existent-proj-xyz")
-    assert res_proj.status_code == 404
-    assert "not found" in res_proj.json()["detail"].lower()
+    from app.db.session import get_db
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    app.dependency_overrides[get_db] = override_get_db
 
-    # Invalid Audit ID
-    res_audit = client.get("/api/v1/audits/non-existent-audit-xyz")
-    assert res_audit.status_code == 404
-    assert "not found" in res_audit.json()["detail"].lower()
+    try:
+        from app.db.models import UserModel
+        from app.services.auth import create_access_token, hash_password
+        user = UserModel(user_id="usr_ph_002", email="ph2@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+        db_session.add(user)
+        db_session.commit()
+        token = create_access_token(user.user_id, user.email)
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # Create project with empty name
-    res_empty_name = client.post("/api/v1/projects", json={"name": "   ", "target_url": "https://example.com"})
-    assert res_empty_name.status_code == 400
+        # Invalid Project ID
+        res_proj = client.get("/api/v1/projects/non-existent-proj-xyz", headers=headers)
+        assert res_proj.status_code == 404
+        assert "not found" in res_proj.json()["detail"].lower()
+
+        # Invalid Audit ID
+        res_audit = client.get("/api/v1/audits/non-existent-audit-xyz", headers=headers)
+        assert res_audit.status_code == 404
+        assert "not found" in res_audit.json()["detail"].lower()
+
+        # Create project with empty name
+        res_empty_name = client.post("/api/v1/projects", json={"name": "   ", "target_url": "https://example.com"}, headers=headers)
+        assert res_empty_name.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
 
 
-def test_backward_compatible_audit_creation_schema():
+def test_backward_compatible_audit_creation_schema(db_session):
     """
     Scenario 12: CreateAuditRequest without project_id remains backward compatible.
     """
-    res = client.get("/api/v1/audits")
-    assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    from app.db.session import get_db
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        from app.db.models import UserModel
+        from app.services.auth import create_access_token, hash_password
+        user = UserModel(user_id="usr_ph_003", email="ph3@example.com", password_hash=hash_password("Pass123!"), created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+        db_session.add(user)
+        db_session.commit()
+        token = create_access_token(user.user_id, user.email)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        res = client.get("/api/v1/audits", headers=headers)
+        assert res.status_code == 200
+        assert isinstance(res.json(), list)
+    finally:
+        app.dependency_overrides.clear()
+

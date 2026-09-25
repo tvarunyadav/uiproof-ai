@@ -6,7 +6,7 @@ from app.services.auth.exceptions import (
 )
 from app.services.auth.security import hash_password, verify_password
 from app.services.auth.jwt import create_access_token, decode_access_token
-from app.services.auth.dependencies import get_current_user
+from app.services.auth.dependencies import get_current_user, get_current_user_dep
 
 __all__ = [
     "AuthenticationError",
@@ -18,4 +18,7 @@ __all__ = [
     "create_access_token",
     "decode_access_token",
     "get_current_user",
+    "get_current_user_dep",
 ]
+
+

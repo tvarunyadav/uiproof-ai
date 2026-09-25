@@ -20,44 +20,13 @@ from app.services.auth import (
     hash_password,
     verify_password,
     create_access_token,
-    get_current_user,
+    get_current_user_dep,
     InvalidTokenError,
     UserNotFoundError,
 )
 
 logger = logging.getLogger("uiproof.api.auth")
 router = APIRouter()
-
-# HTTP Bearer authentication scheme for OpenAPI / Swagger UI integration
-security_scheme = HTTPBearer(auto_error=False)
-
-
-async def get_current_user_dep(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    db: Session = Depends(get_db)
-) -> UserModel:
-    """Dependency helper to resolve current user from HTTP Bearer Authorization header."""
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials: Missing Bearer token.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-    token = credentials.credentials
-    try:
-        return get_current_user(token, db=db)
-    except InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials: Token is invalid or expired.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-    except UserNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials: User no longer exists.",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED, tags=["Authentication"])
@@ -125,6 +94,8 @@ async def get_current_user_profile(current_user: UserModel = Depends(get_current
     Retrieve authenticated user profile based on Bearer JWT token.
     """
     return current_user
+
+
 
 
 @router.post("/logout", response_model=LogoutResponse, status_code=status.HTTP_200_OK, tags=["Authentication"])

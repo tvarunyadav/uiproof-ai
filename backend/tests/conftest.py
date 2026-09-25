@@ -11,11 +11,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-@pytest.fixture
-async def async_client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
-
+from typing import Optional
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.services.auth.dependencies import get_current_user_dep, security_scheme
+from app.services.auth import get_current_user as resolve_user_from_token
 
 @pytest.fixture(scope="function")
 def db_session():
@@ -25,8 +27,6 @@ def db_session():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
-    # Debug table creation
-    # print("DEBUG TABLES:", list(Base.metadata.tables.keys()))
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
     try:
@@ -34,3 +34,17 @@ def db_session():
     finally:
         session.close()
         Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture
+async def async_client(db_session):
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    app.dependency_overrides.clear()

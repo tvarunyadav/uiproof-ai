@@ -36,7 +36,7 @@ class ProjectService:
             db.refresh(project)
         return project
 
-    def create_project(self, request: CreateProjectRequest, db: Optional[Session] = None) -> Project:
+    def create_project(self, request: CreateProjectRequest, user_id: Optional[str] = None, db: Optional[Session] = None) -> Project:
         close_db = False
         if db is None:
             db = SessionLocal()
@@ -46,6 +46,7 @@ class ProjectService:
             project_id = f"proj_{uuid.uuid4().hex[:10]}"
             project_model = ProjectModel(
                 project_id=project_id,
+                user_id=user_id,
                 name=request.name.strip(),
                 target_url=request.target_url.strip(),
                 created_at=datetime.now(timezone.utc)
@@ -65,7 +66,7 @@ class ProjectService:
             if close_db:
                 db.close()
 
-    def get_project(self, project_id: str, db: Optional[Session] = None) -> Optional[Project]:
+    def get_project(self, project_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Optional[Project]:
         close_db = False
         if db is None:
             db = SessionLocal()
@@ -78,6 +79,10 @@ class ProjectService:
                 project_model = db.query(ProjectModel).filter_by(project_id=project_id).first()
 
             if not project_model:
+                return None
+
+            # Ownership check: If project belongs to another user, return None (404)
+            if project_model.user_id and user_id and project_model.user_id != user_id:
                 return None
 
             audit_count = db.query(AuditModel).filter_by(project_id=project_model.project_id).count()
@@ -100,7 +105,7 @@ class ProjectService:
             if close_db:
                 db.close()
 
-    def list_projects(self, db: Optional[Session] = None) -> List[Project]:
+    def list_projects(self, user_id: Optional[str] = None, db: Optional[Session] = None) -> List[Project]:
         close_db = False
         if db is None:
             db = SessionLocal()
@@ -108,7 +113,10 @@ class ProjectService:
 
         try:
             projects_data: List[Project] = []
-            db_projects = db.query(ProjectModel).order_by(ProjectModel.created_at.desc()).all()
+            query = db.query(ProjectModel)
+            if user_id:
+                query = query.filter((ProjectModel.user_id == user_id) | (ProjectModel.user_id.is_(None)))
+            db_projects = query.order_by(ProjectModel.created_at.desc()).all()
 
             for p in db_projects:
                 audit_count = db.query(AuditModel).filter_by(project_id=p.project_id).count()
@@ -192,13 +200,18 @@ class ProjectService:
             baseline_audit_id=audit_model.baseline_audit_id
         )
 
-    def list_project_audits(self, project_id: str, db: Optional[Session] = None) -> List[AuditSummaryItem]:
+    def list_project_audits(self, project_id: str, user_id: Optional[str] = None, db: Optional[Session] = None) -> Optional[List[AuditSummaryItem]]:
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
 
         try:
+            # Authorize project first
+            proj = self.get_project(project_id, user_id=user_id, db=db)
+            if not proj:
+                return None
+
             if project_id == DEFAULT_PROJECT_ID:
                 audit_models = (
                     db.query(AuditModel)
@@ -219,22 +232,36 @@ class ProjectService:
             if close_db:
                 db.close()
 
-    def list_all_audits(self, db: Optional[Session] = None) -> List[AuditSummaryItem]:
+    def list_all_audits(self, user_id: Optional[str] = None, db: Optional[Session] = None) -> List[AuditSummaryItem]:
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
 
         try:
-            audit_models = (
-                db.query(AuditModel)
-                .order_by(AuditModel.created_at.desc())
-                .all()
-            )
+            if user_id:
+                audit_models = (
+                    db.query(AuditModel)
+                    .outerjoin(ProjectModel, AuditModel.project_id == ProjectModel.project_id)
+                    .filter(
+                        (ProjectModel.user_id == user_id) |
+                        (ProjectModel.user_id.is_(None)) |
+                        (AuditModel.project_id.is_(None))
+                    )
+                    .order_by(AuditModel.created_at.desc())
+                    .all()
+                )
+            else:
+                audit_models = (
+                    db.query(AuditModel)
+                    .order_by(AuditModel.created_at.desc())
+                    .all()
+                )
             return [self._convert_audit_to_summary(a) for a in audit_models]
         finally:
             if close_db:
                 db.close()
+
 
 
 project_service = ProjectService()
