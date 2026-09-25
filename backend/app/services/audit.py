@@ -5,7 +5,8 @@ from typing import Dict, List, Optional, Tuple, Set
 
 from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, init_db
-from app.db.models import AuditModel, IssueModel
+from app.db.models import AuditModel, IssueModel, AIAnalysisModel
+from app.schemas.ai import AIAnalysisDetails, IssueAnalysisResponse
 
 from app.schemas.audit import (
     AuditResult,
@@ -424,6 +425,37 @@ class AuditEngineService:
             if close_db:
                 db.close()
 
+    def get_ai_analysis(self, audit_id: str, issue_id: str, db: Optional[Session] = None) -> Optional[AIAnalysisDetails]:
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
+
+        try:
+            analysis_model = (
+                db.query(AIAnalysisModel)
+                .filter_by(audit_id=audit_id, issue_id=issue_id)
+                .order_by(AIAnalysisModel.created_at.desc())
+                .first()
+            )
+            if analysis_model:
+                return AIAnalysisDetails(
+                    summary=analysis_model.summary,
+                    likely_causes=analysis_model.likely_causes or [],
+                    investigation_hints=analysis_model.investigation_hints or [],
+                    expected_result=analysis_model.expected_result,
+                    constraints=analysis_model.constraints or [],
+                    verification_steps=analysis_model.verification_steps or [],
+                    fix_prompt=analysis_model.fix_prompt,
+                )
+            return None
+        except Exception as e:
+            logger.warning(f"Error querying AIAnalysisModel for audit {audit_id}, issue {issue_id}: {e}")
+            return None
+        finally:
+            if close_db:
+                db.close()
+
     async def analyze_issue(self, audit_id: str, issue_id: str, db: Optional[Session] = None) -> IssueAnalysisResponse:
         audit = self.get_audit(audit_id, db=db)
         if not audit:
@@ -434,27 +466,56 @@ class AuditEngineService:
         if not target_issue:
             raise KeyError(f"Issue with ID '{issue_id}' not found in audit '{audit_id}'.")
 
+        # 1. Check if AI analysis is already persisted in the database
+        existing_analysis = self.get_ai_analysis(audit_id=audit_id, issue_id=issue_id, db=db)
+        if existing_analysis:
+            causes_str = "\n".join(f"- {c}" for c in existing_analysis.likely_causes) if existing_analysis.likely_causes else "N/A"
+            target_issue.root_cause_analysis = f"{existing_analysis.summary}\n\nLikely Causes:\n{causes_str}"
+            target_issue.recommended_fix = existing_analysis.fix_prompt
+
+            return IssueAnalysisResponse(
+                audit_id=audit_id,
+                issue_id=issue_id,
+                issue=target_issue,
+                analysis=existing_analysis
+            )
+
+        # 2. If not persisted, invoke AI provider
         analysis_details = await self.ai_provider.analyze_issue(target_issue, audit.evidence)
 
-        # Enrich in-memory issue instance
+        # Enrich target issue instance
         causes_str = "\n".join(f"- {c}" for c in analysis_details.likely_causes) if analysis_details.likely_causes else "N/A"
         target_issue.root_cause_analysis = f"{analysis_details.summary}\n\nLikely Causes:\n{causes_str}"
         target_issue.recommended_fix = analysis_details.fix_prompt
 
-        # Persist issue update to database
+        # 3. Persist AIAnalysisModel and update IssueModel
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
         try:
+            ai_model = AIAnalysisModel(
+                audit_id=audit_id,
+                issue_id=issue_id,
+                summary=analysis_details.summary,
+                likely_causes=analysis_details.likely_causes or [],
+                investigation_hints=analysis_details.investigation_hints or [],
+                expected_result=analysis_details.expected_result,
+                constraints=analysis_details.constraints or [],
+                verification_steps=analysis_details.verification_steps or [],
+                fix_prompt=analysis_details.fix_prompt,
+            )
+            db.add(ai_model)
+
             issue_model = db.query(IssueModel).filter_by(audit_id=audit_id, issue_id=issue_id).first()
             if issue_model:
                 issue_model.root_cause_analysis = target_issue.root_cause_analysis
                 issue_model.recommended_fix = target_issue.recommended_fix
-                db.commit()
+
+            db.commit()
         except Exception as e:
             db.rollback()
-            logger.warning(f"Could not persist issue analysis update to DB: {e}")
+            logger.warning(f"Could not persist AI analysis record to DB: {e}")
         finally:
             if close_db:
                 db.close()
