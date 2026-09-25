@@ -3,6 +3,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Set
 
+from sqlalchemy.orm import Session
+from app.db.session import SessionLocal, init_db
+from app.db.models import AuditModel, IssueModel
+
 from app.schemas.audit import (
     AuditResult,
     AuditStatus,
@@ -245,6 +249,7 @@ class AuditEngineService:
     1. Browser evidence collection via Playwright runner
     2. Deterministic findings generation
     3. Before/After audit comparison logic
+    4. Database persistence for Audits and Issues
     """
 
     def __init__(
@@ -255,9 +260,172 @@ class AuditEngineService:
         self.browser_runner = browser_runner or PlaywrightBrowserRunner()
         self.ai_provider = ai_provider or OpenAILLMProvider()
         self._audits_db: Dict[str, AuditResult] = {}
+        try:
+            init_db()
+        except Exception as e:
+            logger.warning(f"Could not auto-initialize database in AuditEngineService: {e}")
 
-    async def analyze_issue(self, audit_id: str, issue_id: str) -> IssueAnalysisResponse:
-        audit = self.get_audit(audit_id)
+    def _save_audit_to_db(
+        self,
+        audit_result: AuditResult,
+        baseline_audit_id: Optional[str] = None,
+        db: Optional[Session] = None
+    ) -> None:
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
+
+        try:
+            audit_model = db.query(AuditModel).filter_by(audit_id=audit_result.audit_id).first()
+            status_str = audit_result.status.value if isinstance(audit_result.status, AuditStatus) else str(audit_result.status)
+            stats_dict = audit_result.stats.model_dump() if audit_result.stats else {}
+            evidence_dict = audit_result.evidence.model_dump(mode="json") if audit_result.evidence else None
+
+            if not audit_model:
+                audit_model = AuditModel(
+                    audit_id=audit_result.audit_id,
+                    target_url=audit_result.target_url or audit_result.url,
+                    baseline_audit_id=baseline_audit_id,
+                    status=status_str,
+                    created_at=audit_result.created_at or datetime.now(timezone.utc),
+                    started_at=audit_result.started_at,
+                    completed_at=audit_result.completed_at,
+                    stats=stats_dict,
+                    evidence=evidence_dict,
+                    error_message=audit_result.error_message,
+                )
+                db.add(audit_model)
+            else:
+                audit_model.target_url = audit_result.target_url or audit_result.url
+                audit_model.status = status_str
+                audit_model.completed_at = audit_result.completed_at
+                audit_model.stats = stats_dict
+                audit_model.evidence = evidence_dict
+                audit_model.error_message = audit_result.error_message
+
+            all_issues = audit_result.issues if audit_result.issues else (audit_result.findings or [])
+            for issue in all_issues:
+                cat_val = issue.category.value if isinstance(issue.category, IssueCategory) else str(issue.category)
+                sev_val = issue.severity.value if isinstance(issue.severity, IssueSeverity) else str(issue.severity)
+
+                existing_issue = db.query(IssueModel).filter_by(audit_id=audit_result.audit_id, issue_id=issue.issue_id).first()
+                if not existing_issue:
+                    issue_model = IssueModel(
+                        issue_id=issue.issue_id,
+                        audit_id=audit_result.audit_id,
+                        category=cat_val,
+                        severity=sev_val,
+                        title=issue.title,
+                        description=issue.description,
+                        selector=issue.selector,
+                        viewport=issue.viewport,
+                        evidence_references=issue.evidence_references or [],
+                        root_cause_analysis=issue.root_cause_analysis,
+                        recommended_fix=issue.recommended_fix,
+                    )
+                    db.add(issue_model)
+                else:
+                    existing_issue.root_cause_analysis = issue.root_cause_analysis
+                    existing_issue.recommended_fix = issue.recommended_fix
+                    existing_issue.evidence_references = issue.evidence_references or []
+
+            db.commit()
+            self._audits_db[audit_result.audit_id] = audit_result
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error saving audit {audit_result.audit_id} to DB: {e}")
+            raise e
+        finally:
+            if close_db:
+                db.close()
+
+    def get_audit(self, audit_id: str, db: Optional[Session] = None) -> Optional[AuditResult]:
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
+
+        try:
+            audit_model = db.query(AuditModel).filter_by(audit_id=audit_id).first()
+            if audit_model:
+                issues = []
+                for i in audit_model.issues:
+                    cat = IssueCategory(i.category) if i.category in IssueCategory._value2member_map_ else i.category
+                    sev = IssueSeverity(i.severity) if i.severity in IssueSeverity._value2member_map_ else i.severity
+                    issues.append(
+                        Issue(
+                            issue_id=i.issue_id,
+                            category=cat,
+                            severity=sev,
+                            title=i.title,
+                            description=i.description,
+                            selector=i.selector,
+                            viewport=i.viewport,
+                            evidence_references=i.evidence_references or [],
+                            root_cause_analysis=i.root_cause_analysis,
+                            recommended_fix=i.recommended_fix,
+                        )
+                    )
+
+                evidence_obj = None
+                if audit_model.evidence:
+                    try:
+                        evidence_obj = BrowserEvidence.model_validate(audit_model.evidence)
+                    except Exception as e:
+                        logger.warning(f"Failed to deserialize evidence for audit {audit_id}: {e}")
+                        evidence_obj = None
+
+                stats_obj = AuditSummaryStats()
+                if audit_model.stats:
+                    try:
+                        stats_obj = AuditSummaryStats.model_validate(audit_model.stats)
+                    except Exception as e:
+                        logger.warning(f"Failed to deserialize stats for audit {audit_id}: {e}")
+
+                status_enum = AuditStatus(audit_model.status) if audit_model.status in AuditStatus._value2member_map_ else audit_model.status
+
+                created_at = audit_model.created_at
+                if created_at and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+
+                started_at = audit_model.started_at
+                if started_at and started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+
+                completed_at = audit_model.completed_at
+                if completed_at and completed_at.tzinfo is None:
+                    completed_at = completed_at.replace(tzinfo=timezone.utc)
+
+                result = AuditResult(
+                    audit_id=audit_model.audit_id,
+                    target_url=audit_model.target_url,
+                    url=audit_model.target_url,
+                    status=status_enum,
+                    created_at=created_at,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    desktop=evidence_obj.desktop if evidence_obj else None,
+                    mobile=evidence_obj.mobile if evidence_obj else None,
+                    evidence=evidence_obj,
+                    issues=issues,
+                    findings=issues,
+                    stats=stats_obj,
+                    error_message=audit_model.error_message,
+                )
+                self._audits_db[audit_id] = result
+                return result
+
+            return self._audits_db.get(audit_id)
+        except Exception as e:
+            logger.error(f"Error querying audit {audit_id} from DB: {e}")
+            return self._audits_db.get(audit_id)
+        finally:
+            if close_db:
+                db.close()
+
+    async def analyze_issue(self, audit_id: str, issue_id: str, db: Optional[Session] = None) -> IssueAnalysisResponse:
+        audit = self.get_audit(audit_id, db=db)
         if not audit:
             raise KeyError(f"Audit with ID '{audit_id}' not found.")
 
@@ -273,6 +441,24 @@ class AuditEngineService:
         target_issue.root_cause_analysis = f"{analysis_details.summary}\n\nLikely Causes:\n{causes_str}"
         target_issue.recommended_fix = analysis_details.fix_prompt
 
+        # Persist issue update to database
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
+        try:
+            issue_model = db.query(IssueModel).filter_by(audit_id=audit_id, issue_id=issue_id).first()
+            if issue_model:
+                issue_model.root_cause_analysis = target_issue.root_cause_analysis
+                issue_model.recommended_fix = target_issue.recommended_fix
+                db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning(f"Could not persist issue analysis update to DB: {e}")
+        finally:
+            if close_db:
+                db.close()
+
         return IssueAnalysisResponse(
             audit_id=audit_id,
             issue_id=issue_id,
@@ -280,7 +466,7 @@ class AuditEngineService:
             analysis=analysis_details
         )
 
-    async def create_audit(self, request: CreateAuditRequest) -> AuditResult:
+    async def create_audit(self, request: CreateAuditRequest, db: Optional[Session] = None) -> AuditResult:
         audit_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc)
 
@@ -333,7 +519,7 @@ class AuditEngineService:
                 stats=stats,
             )
 
-            self._audits_db[audit_id] = audit_result
+            self._save_audit_to_db(audit_result, baseline_audit_id=request.baseline_audit_id, db=db)
             return audit_result
 
         except Exception as err:
@@ -356,14 +542,11 @@ class AuditEngineService:
                 findings=[],
                 stats=AuditSummaryStats()
             )
-            self._audits_db[audit_id] = failed_result
+            self._save_audit_to_db(failed_result, baseline_audit_id=request.baseline_audit_id, db=db)
             return failed_result
 
-    def get_audit(self, audit_id: str) -> Optional[AuditResult]:
-        return self._audits_db.get(audit_id)
-
-    async def retest_audit(self, audit_id: str) -> Tuple[AuditResult, AuditComparison]:
-        baseline = self.get_audit(audit_id)
+    async def retest_audit(self, audit_id: str, db: Optional[Session] = None) -> Tuple[AuditResult, AuditComparison]:
+        baseline = self.get_audit(audit_id, db=db)
         if not baseline:
             raise KeyError(f"Baseline audit with ID '{audit_id}' not found.")
 
@@ -383,8 +566,8 @@ class AuditEngineService:
             baseline_audit_id=audit_id
         )
 
-        retest_audit_result = await self.create_audit(retest_request)
-        comparison = self.compare_audits(baseline_id=audit_id, new_id=retest_audit_result.audit_id)
+        retest_audit_result = await self.create_audit(retest_request, db=db)
+        comparison = self.compare_audits(baseline_id=audit_id, new_id=retest_audit_result.audit_id, db=db)
         if not comparison:
             comparison = AuditComparison(
                 baseline_audit_id=audit_id,
@@ -398,9 +581,9 @@ class AuditEngineService:
 
         return retest_audit_result, comparison
 
-    def compare_audits(self, baseline_id: str, new_id: str) -> Optional[AuditComparison]:
-        baseline = self._audits_db.get(baseline_id)
-        new_audit = self._audits_db.get(new_id)
+    def compare_audits(self, baseline_id: str, new_id: str, db: Optional[Session] = None) -> Optional[AuditComparison]:
+        baseline = self.get_audit(baseline_id, db=db)
+        new_audit = self.get_audit(new_id, db=db)
 
         if not baseline or not new_audit:
             return None
