@@ -59,7 +59,23 @@ import {
   Copy,
   ShieldCheck,
   RefreshCw,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  X,
 } from 'lucide-react';
+
+const ZOOM_LEVELS = [50, 75, 100, 125, 150, 200, 250, 300];
+
+const AUDIT_STAGES = [
+  "1. Preparing audit configuration...",
+  "2. Launching Playwright Chromium browser...",
+  "3. Navigating target URL & auditing Desktop (1440x900)...",
+  "4. Auditing Mobile viewport (390x844)...",
+  "5. Collecting DOM metrics & screenshot evidence...",
+  "6. Running deterministic issue analysis...",
+  "7. Finalizing audit results..."
+];
 
 export const App: React.FC = () => {
   // Milestone 7F: Auth & User Session State
@@ -68,12 +84,15 @@ export const App: React.FC = () => {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [url, setUrl] = useState('');
+  const [auditMode, setAuditMode] = useState<'remote' | 'local'>('remote');
   const [selectedViewports, setSelectedViewports] = useState<string[]>(['desktop', 'mobile']);
   const [isLoading, setIsLoading] = useState(false);
+  const [auditStageIndex, setAuditStageIndex] = useState<number>(0);
   const [isRetesting, setIsRetesting] = useState(false);
   const [activeTab, setActiveTab] = useState<'audit' | 'compare' | 'prompt'>('audit');
   const [compareCategoryTab, setCompareCategoryTab] = useState<'fixed' | 'remaining' | 'new'>('remaining');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [zoomIndex, setZoomIndex] = useState<number>(2); // Default 100%
   const [severityFilter, setSeverityFilter] = useState<'all' | IssueSeverity>('all');
   const [expandedIssueIds, setExpandedIssueIds] = useState<Record<string, boolean>>({});
 
@@ -81,6 +100,8 @@ export const App: React.FC = () => {
   const [currentAudit, setCurrentAudit] = useState<AuditResult | null>(null);
   const [baselineAudit, setBaselineAudit] = useState<AuditResult | null>(null);
   const [comparisonResult, setComparisonResult] = useState<AuditComparison | null>(null);
+  const [isComparing, setIsComparing] = useState<boolean>(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
   const [fixPromptData, setFixPromptData] = useState<DeveloperFixPrompt | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -134,6 +155,47 @@ export const App: React.FC = () => {
       }
     }
   }, [authStatus, selectedProject]);
+
+  // Keyboard listener for screenshot lightbox zoom and escape key
+  useEffect(() => {
+    if (!selectedImage) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedImage(null);
+        setZoomIndex(2);
+      } else if (e.key === '+' || e.key === '=') {
+        setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
+      } else if (e.key === '-') {
+        setZoomIndex((prev) => Math.max(0, prev - 1));
+      } else if (e.key === '0') {
+        setZoomIndex(2);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedImage]);
+
+  const handleSelectBaselineForComparison = async (newBaselineAuditId: string) => {
+    if (!currentAudit || isComparing) return;
+    setIsComparing(true);
+    setCompareError(null);
+    try {
+      const comp = await compareAudits(newBaselineAuditId, currentAudit.audit_id);
+      const baselineObj = await getAudit(newBaselineAuditId);
+      setBaselineAudit(baselineObj);
+      setComparisonResult(comp);
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
+      setCompareError(err.message || 'Failed to compare with selected baseline audit.');
+    } finally {
+      setIsComparing(false);
+    }
+  };
 
   const handleSessionExpired = (msg = 'Your session has expired. Please log in again.') => {
     localStorage.removeItem('uiproof_token');
@@ -350,12 +412,18 @@ export const App: React.FC = () => {
 
     let targetUrl = url.trim();
     if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-      targetUrl = `https://${targetUrl}`;
+      const prefix = auditMode === 'local' ? 'http://' : 'https://';
+      targetUrl = `${prefix}${targetUrl}`;
       setUrl(targetUrl);
     }
 
     setIsLoading(true);
+    setAuditStageIndex(0);
     setErrorMessage(null);
+
+    const stageInterval = setInterval(() => {
+      setAuditStageIndex((prev) => (prev < AUDIT_STAGES.length - 1 ? prev + 1 : prev));
+    }, 1400);
 
     try {
       if (currentAudit && currentAudit.status === 'completed') {
@@ -364,6 +432,7 @@ export const App: React.FC = () => {
 
       const result = await createAudit({
         url: targetUrl,
+        mode: auditMode,
         viewports: selectedViewports,
         project_id: selectedProject?.project_id,
       });
@@ -405,6 +474,7 @@ export const App: React.FC = () => {
       }
       setErrorMessage(err.message || 'Audit execution failed. Ensure backend API is running.');
     } finally {
+      clearInterval(stageInterval);
       setIsLoading(false);
     }
   };
@@ -494,7 +564,10 @@ export const App: React.FC = () => {
               className="w-full h-48 object-cover object-top transition-transform group-hover:scale-105"
             />
             <button
-              onClick={() => setSelectedImage(screenshotUrl)}
+              onClick={() => {
+                setSelectedImage(screenshotUrl);
+                setZoomIndex(2);
+              }}
               className="absolute inset-0 bg-background/60 backdrop-blur-sm opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 text-xs font-mono text-text-primary transition-opacity"
             >
               <Maximize2 className="w-4 h-4 text-accent" />
@@ -838,14 +911,93 @@ export const App: React.FC = () => {
               <span className="text-[10px] text-text-muted">Desktop (1440x900) & Mobile (390x844)</span>
             </div>
 
+            {/* Audit Target Mode Selector */}
+            <div className="flex flex-col gap-2.5 p-3 rounded-lg bg-surface border border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-text-primary uppercase tracking-wider font-mono">
+                  Audit Target Mode
+                </span>
+                <span className="text-[10px] font-mono text-text-muted">
+                  {auditMode === 'local' ? 'Localhost / Dev Target' : 'Public / Deployed Target'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAuditMode('remote')}
+                  className={`p-2.5 rounded border text-left flex items-start gap-2.5 transition-all ${
+                    auditMode === 'remote'
+                      ? 'bg-surface-raised border-accent text-text-primary shadow-sm'
+                      : 'bg-background border-border text-text-muted hover:text-text-primary hover:border-border/80'
+                  }`}
+                >
+                  <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                    auditMode === 'remote' ? 'border-accent bg-accent' : 'border-text-muted'
+                  }`}>
+                    {auditMode === 'remote' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </div>
+                  <div className="flex flex-col gap-0.5 font-mono flex-1">
+                    <div className="flex items-center justify-between gap-1 font-semibold text-xs text-text-primary">
+                      <div className="flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Remote Website</span>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">REMOTE</span>
+                    </div>
+                    <span className="text-[11px] text-text-muted font-sans leading-tight">
+                      Publicly accessible web application URL
+                    </span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAuditMode('local')}
+                  className={`p-2.5 rounded border text-left flex items-start gap-2.5 transition-all ${
+                    auditMode === 'local'
+                      ? 'bg-surface-raised border-accent text-text-primary shadow-sm'
+                      : 'bg-background border-border text-text-muted hover:text-text-primary hover:border-border/80'
+                  }`}
+                >
+                  <div className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                    auditMode === 'local' ? 'border-accent bg-accent' : 'border-text-muted'
+                  }`}>
+                    {auditMode === 'local' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  </div>
+                  <div className="flex flex-col gap-0.5 font-mono flex-1">
+                    <div className="flex items-center justify-between gap-1 font-semibold text-xs text-text-primary">
+                      <div className="flex items-center gap-1.5">
+                        <Monitor className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Local Website</span>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase">LOCAL</span>
+                    </div>
+                    <span className="text-[11px] text-text-muted font-sans leading-tight">
+                      Test an application running on this computer (localhost / 127.0.0.1)
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+              <div className="text-[11px] text-text-muted font-mono pt-1 flex items-center gap-1.5">
+                <span className="text-text-primary font-semibold">Helper:</span>
+                <span>
+                  {auditMode === 'local'
+                    ? 'Local audits run through your local UIProof backend and can test localhost applications before deployment.'
+                    : 'Audit a publicly accessible website.'}
+                </span>
+              </div>
+            </div>
+
             <div className="flex flex-col md:flex-row items-center gap-3">
               <div className="relative flex-1 w-full">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-text-muted">
-                  <Globe className="w-4 h-4" />
+                  {auditMode === 'local' ? <Monitor className="w-4 h-4 text-emerald-400" /> : <Globe className="w-4 h-4 text-indigo-400" />}
                 </div>
                 <Input
                   type="text"
-                  placeholder="Enter application URL (e.g. https://example.com)"
+                  placeholder={auditMode === 'local' ? 'http://localhost:5173' : 'https://example.com'}
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   disabled={isLoading}
@@ -858,26 +1010,32 @@ export const App: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => toggleViewport('desktop')}
-                  className={`px-2.5 py-1.5 rounded text-xs font-mono flex items-center gap-1.5 transition-colors ${
+                  className={`px-3 py-1.5 rounded text-xs font-mono flex items-center gap-2 transition-colors ${
                     selectedViewports.includes('desktop')
-                      ? 'bg-surface-raised text-text-primary border border-border'
+                      ? 'bg-surface-raised text-text-primary border border-border shadow-sm'
                       : 'text-text-muted hover:text-text-primary'
                   }`}
                 >
-                  <Monitor className="w-3.5 h-3.5" />
-                  Desktop
+                  <Monitor className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <div className="flex flex-col text-left">
+                    <span className="font-semibold leading-tight">Desktop</span>
+                    <span className="text-[10px] text-text-muted leading-tight font-mono">1440 × 900</span>
+                  </div>
                 </button>
                 <button
                   type="button"
                   onClick={() => toggleViewport('mobile')}
-                  className={`px-2.5 py-1.5 rounded text-xs font-mono flex items-center gap-1.5 transition-colors ${
+                  className={`px-3 py-1.5 rounded text-xs font-mono flex items-center gap-2 transition-colors ${
                     selectedViewports.includes('mobile')
-                      ? 'bg-surface-raised text-text-primary border border-border'
+                      ? 'bg-surface-raised text-text-primary border border-border shadow-sm'
                       : 'text-text-muted hover:text-text-primary'
                   }`}
                 >
-                  <Smartphone className="w-3.5 h-3.5" />
-                  Mobile
+                  <Smartphone className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <div className="flex flex-col text-left">
+                    <span className="font-semibold leading-tight">Mobile</span>
+                    <span className="text-[10px] text-text-muted leading-tight font-mono">390 × 844</span>
+                  </div>
                 </button>
               </div>
 
@@ -888,15 +1046,41 @@ export const App: React.FC = () => {
             </div>
           </form>
 
-          {/* Loading Indicator */}
+          {/* Granular Loading Progress Indicator */}
           {isLoading && (
-            <div className="mt-4 p-4 rounded bg-accent/5 border border-accent/20 text-accent text-xs font-mono flex items-center gap-3 animate-pulse">
-              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-accent" />
-              <div>
-                <span className="font-semibold">Launching Playwright Chromium Engine...</span>
-                <p className="text-[11px] text-text-muted mt-0.5">
-                  Visiting {url}, recording console logs, inspecting network responses, checking images/links, and calculating horizontal overflow.
-                </p>
+            <div className="mt-4 p-4 rounded-lg bg-surface border border-indigo-500/30 text-xs font-mono flex flex-col gap-3">
+              <div className="flex items-center justify-between border-b border-border/80 pb-2">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
+                  <span className="font-semibold text-text-primary">Playwright Chromium Audit Execution</span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
+                  Stage {auditStageIndex + 1} of {AUDIT_STAGES.length}
+                </span>
+              </div>
+
+              {/* Progress Step Bars */}
+              <div className="flex items-center gap-1.5 py-0.5">
+                {AUDIT_STAGES.map((stg, idx) => (
+                  <div
+                    key={idx}
+                    className={`h-1.5 flex-1 rounded-full transition-all duration-300 ${
+                      idx < auditStageIndex
+                        ? 'bg-indigo-500'
+                        : idx === auditStageIndex
+                        ? 'bg-indigo-400 animate-pulse shadow-glow'
+                        : 'bg-slate-800'
+                    }`}
+                    title={stg}
+                  />
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between text-text-muted pt-0.5">
+                <span className="text-indigo-300 font-medium">{AUDIT_STAGES[auditStageIndex]}</span>
+                <span className="text-[10px] text-text-muted truncate max-w-[200px]" title={url}>
+                  Target: {url}
+                </span>
               </div>
             </div>
           )}
@@ -946,6 +1130,9 @@ export const App: React.FC = () => {
                   <span className="truncate">{currentAudit.target_url || currentAudit.url}</span>
                   <ExternalLink className="w-3.5 h-3.5 shrink-0" />
                 </a>
+                <Badge variant={currentAudit.mode === 'local' ? 'info' : 'neutral'}>
+                  {currentAudit.mode ? currentAudit.mode.toUpperCase() : 'REMOTE'}
+                </Badge>
                 <Badge variant={currentAudit.status === 'completed' ? 'success' : 'critical'}>
                   {currentAudit.status.toUpperCase()}
                 </Badge>
@@ -1219,18 +1406,52 @@ export const App: React.FC = () => {
         {activeTab === 'compare' && comparisonResult && (
           <div className="flex flex-col gap-6">
             {/* Comparison Summary Banner */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg bg-surface-raised/40 border border-border font-mono text-xs">
-              <div className="flex items-center gap-2">
-                <GitCompare className="w-4 h-4 text-accent" />
-                <span className="font-semibold text-text-primary uppercase">Verification Flow:</span>
-                <span className="text-text-muted">
-                  Baseline ({comparisonResult.baseline_audit_id.slice(0, 8)}) → Retest ({comparisonResult.new_audit_id.slice(0, 8)})
-                </span>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-lg bg-surface-raised/40 border border-border font-mono text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <GitCompare className="w-4 h-4 text-accent" />
+                  <span className="font-semibold text-text-primary uppercase">Verification Flow</span>
+                </div>
+
+                <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded border border-border">
+                  <span className="text-text-muted text-[11px] font-sans">Compare Against Baseline:</span>
+                  <select
+                    value={comparisonResult.baseline_audit_id}
+                    onChange={(e) => handleSelectBaselineForComparison(e.target.value)}
+                    disabled={isComparing}
+                    className="bg-surface text-text-primary text-xs font-mono rounded px-2 py-1 border border-border focus:outline-none focus:border-accent disabled:opacity-50 cursor-pointer max-w-[280px] truncate"
+                  >
+                    {historyAudits.map((a) => {
+                      const isCurrent = Boolean(currentAudit && a.audit_id === currentAudit.audit_id);
+                      const formattedDate = new Date(a.created_at).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      });
+                      return (
+                        <option key={a.audit_id} value={a.audit_id} disabled={isCurrent}>
+                          Audit {a.audit_id.slice(0, 8)} — {formattedDate} ({a.total_issues ?? 0} issues){isCurrent ? ' [Current Audit]' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {isComparing && <RefreshCw className="w-3 h-3 text-accent animate-spin" />}
+                </div>
               </div>
-              <span className="text-[11px] text-text-muted">
-                Deterministic ID Matching ({comparisonResult.fixed_issues.length + comparisonResult.remaining_issues.length + comparisonResult.new_issues.length} total issues analyzed)
-              </span>
+
+              <div className="flex items-center gap-3 text-[11px] text-text-muted">
+                <span>Retest: <code className="text-text-primary">{comparisonResult.new_audit_id.slice(0, 8)}</code></span>
+                <span>•</span>
+                <span>{comparisonResult.fixed_issues.length + comparisonResult.remaining_issues.length + comparisonResult.new_issues.length} issues analyzed</span>
+              </div>
             </div>
+
+            {compareError && (
+              <div className="p-3 rounded border border-status-error/30 bg-status-error/10 text-status-error text-xs font-mono">
+                {compareError}
+              </div>
+            )}
 
             {/* Category Cards (Clickable) */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono">
@@ -1470,11 +1691,73 @@ export const App: React.FC = () => {
       {/* Screenshot Lightbox Modal */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex items-center justify-center p-6"
+          className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-4 md:p-6"
           onClick={() => setSelectedImage(null)}
         >
-          <div className="relative max-w-5xl w-full max-h-[90vh] bg-surface-raised border border-border rounded-lg p-2 overflow-auto">
-            <img src={selectedImage} alt="Full Screenshot" className="w-full h-auto rounded" />
+          {/* Lightbox Container */}
+          <div
+            className="relative max-w-5xl w-full max-h-[90vh] bg-surface-raised border border-border rounded-lg p-3 flex flex-col overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Floating Zoom Toolbar Header */}
+            <div className="flex items-center justify-between gap-3 pb-3 mb-2 border-b border-border text-xs font-mono">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setZoomIndex((prev) => Math.max(0, prev - 1))}
+                  disabled={zoomIndex === 0}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1"
+                  title="Zoom Out (-)"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+                <span className="px-2.5 py-1 rounded bg-background border border-border font-bold text-accent min-w-[54px] text-center">
+                  {ZOOM_LEVELS[zoomIndex]}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1))}
+                  disabled={zoomIndex === ZOOM_LEVELS.length - 1}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1"
+                  title="Zoom In (+)"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoomIndex(2)}
+                  className="p-1.5 px-2.5 rounded bg-surface hover:bg-background border border-border text-text-muted hover:text-text-primary transition-colors flex items-center gap-1.5 ml-1"
+                  title="Reset Zoom (0)"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-text-muted hidden sm:inline">Use +/-/0 or Esc</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedImage(null)}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-muted hover:text-text-primary transition-colors"
+                  title="Close Lightbox (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Image Area */}
+            <div className="overflow-auto flex-1 flex items-center justify-center p-2 min-h-[300px]">
+              <img
+                src={selectedImage}
+                alt="Full Screenshot"
+                className="max-w-none rounded transition-transform duration-150 ease-out origin-top-left"
+                style={{
+                  transform: `scale(${ZOOM_LEVELS[zoomIndex] / 100})`,
+                }}
+              />
+            </div>
           </div>
         </div>
       )}

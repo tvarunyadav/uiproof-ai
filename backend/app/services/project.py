@@ -191,6 +191,7 @@ class ProjectService:
             audit_id=audit_model.audit_id,
             project_id=audit_model.project_id,
             target_url=audit_model.target_url,
+            mode=getattr(audit_model, "mode", "remote") or "remote",
             status=status_enum,
             created_at=created_at,
             completed_at=completed_at,

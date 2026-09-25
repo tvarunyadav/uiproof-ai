@@ -223,6 +223,7 @@ export async function createAudit(request: CreateAuditRequest): Promise<AuditRes
     },
     body: JSON.stringify({
       url: request.url,
+      mode: request.mode || 'remote',
       viewports: request.viewports || ['desktop', 'mobile'],
       baseline_audit_id: request.baseline_audit_id,
       project_id: request.project_id,

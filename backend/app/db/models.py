@@ -42,6 +42,7 @@ class AuditModel(Base):
     project_id = Column(String, ForeignKey("projects.project_id"), nullable=True, index=True)
     baseline_audit_id = Column(String, ForeignKey("audits.audit_id"), nullable=True, index=True)
     target_url = Column(String, nullable=False)
+    mode = Column(String, nullable=False, server_default="remote", default="remote")
     status = Column(String, nullable=False, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)

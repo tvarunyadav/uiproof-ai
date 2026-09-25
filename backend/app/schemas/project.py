@@ -21,6 +21,7 @@ class AuditSummaryItem(BaseModel):
     audit_id: str = Field(..., description="Audit UUID")
     project_id: Optional[str] = Field(None, description="Associated Project ID")
     target_url: str = Field(..., description="Target web application URL")
+    mode: str = Field(default="remote", description="Audit execution mode: 'remote' or 'local'")
     status: AuditStatus = Field(..., description="Audit execution status")
     created_at: datetime = Field(..., description="Audit start timestamp")
     completed_at: Optional[datetime] = Field(None, description="Audit completion timestamp")

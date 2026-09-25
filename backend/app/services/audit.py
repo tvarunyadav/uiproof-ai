@@ -27,7 +27,8 @@ from app.services.browser.interface import BaseBrowserRunner
 from app.services.browser.playwright_runner import PlaywrightBrowserRunner
 from app.services.ai.interface import BaseLLMProvider, StubLLMProvider, AINotConfiguredError, AIProviderError
 from app.services.ai.openai_provider import OpenAILLMProvider
-from app.schemas.ai import IssueAnalysisResponse, AIAnalysisDetails
+from app.utils.security import validate_and_sanitize_url
+from app.config import settings
 
 logger = logging.getLogger("uiproof.service")
 
@@ -283,12 +284,14 @@ class AuditEngineService:
             status_str = audit_result.status.value if isinstance(audit_result.status, AuditStatus) else str(audit_result.status)
             stats_dict = audit_result.stats.model_dump() if audit_result.stats else {}
             evidence_dict = audit_result.evidence.model_dump(mode="json") if audit_result.evidence else None
+            mode_str = audit_result.mode or "remote"
 
             if not audit_model:
                 audit_model = AuditModel(
                     audit_id=audit_result.audit_id,
                     project_id=project_id,
                     target_url=audit_result.target_url or audit_result.url,
+                    mode=mode_str,
                     baseline_audit_id=baseline_audit_id,
                     status=status_str,
                     created_at=audit_result.created_at or datetime.now(timezone.utc),
@@ -301,6 +304,7 @@ class AuditEngineService:
                 db.add(audit_model)
             else:
                 audit_model.target_url = audit_result.target_url or audit_result.url
+                audit_model.mode = mode_str
                 audit_model.status = status_str
                 if baseline_audit_id:
                     audit_model.baseline_audit_id = baseline_audit_id
@@ -414,6 +418,7 @@ class AuditEngineService:
                     audit_id=audit_model.audit_id,
                     target_url=audit_model.target_url,
                     url=audit_model.target_url,
+                    mode=getattr(audit_model, "mode", "remote") or "remote",
                     status=status_enum,
                     created_at=created_at,
                     started_at=started_at,
@@ -545,6 +550,16 @@ class AuditEngineService:
         )
 
     async def create_audit(self, request: CreateAuditRequest, user_id: Optional[str] = None, db: Optional[Session] = None) -> AuditResult:
+        # Validate target URL and audit mode
+        is_prod = settings.ENVIRONMENT.lower() == "production"
+        validated_url = validate_and_sanitize_url(
+            url=request.url,
+            mode=request.mode,
+            is_production=is_prod
+        )
+        request.url = validated_url
+        audit_mode = request.mode or "remote"
+
         # Verify target project ownership if project_id is specified
         if request.project_id:
             from app.services.project import project_service
@@ -592,6 +607,7 @@ class AuditEngineService:
                 audit_id=audit_id,
                 target_url=request.url,
                 url=request.url,
+                mode=audit_mode,
                 status=AuditStatus.COMPLETED,
                 created_at=started_at,
                 started_at=started_at,
@@ -625,6 +641,7 @@ class AuditEngineService:
                 audit_id=audit_id,
                 target_url=request.url,
                 url=request.url,
+                mode=audit_mode,
                 status=AuditStatus.FAILED,
                 created_at=started_at,
                 started_at=started_at,
@@ -674,6 +691,7 @@ class AuditEngineService:
         target_url = baseline.target_url or baseline.url
         retest_request = CreateAuditRequest(
             url=target_url,
+            mode=baseline.mode or "remote",
             viewports=viewports,
             baseline_audit_id=audit_id,
             project_id=baseline_project_id

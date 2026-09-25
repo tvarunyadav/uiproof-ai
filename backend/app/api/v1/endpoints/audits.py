@@ -57,7 +57,12 @@ async def create_audit(
     Executes Playwright Chromium, collects browser evidence across viewports, and produces structured issues.
     """
     # Enforce URL scheme validation & SSRF protection
-    sanitized_url = validate_and_sanitize_url(request.url)
+    is_prod = settings.ENVIRONMENT.lower() == "production"
+    sanitized_url = validate_and_sanitize_url(
+        url=request.url,
+        mode=request.mode,
+        is_production=is_prod
+    )
     request.url = sanitized_url
 
     try:

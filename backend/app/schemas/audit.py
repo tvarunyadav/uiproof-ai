@@ -15,6 +15,10 @@ class AuditStatus(str, Enum):
 
 class CreateAuditRequest(BaseModel):
     url: str = Field(..., description="Target web application URL to audit")
+    mode: str = Field(
+        default="remote",
+        description="Audit execution mode: 'remote' (public website) or 'local' (localhost/loopback app)"
+    )
     viewports: List[str] = Field(
         default=["desktop", "mobile"],
         description="Viewport sizes to test: desktop (1440x900), mobile (390x844)"
@@ -46,6 +50,7 @@ class AuditResult(BaseModel):
     audit_id: str = Field(..., description="Unique UUID for this audit run")
     target_url: Optional[str] = Field(None, description="Target web application URL")
     url: str
+    mode: str = Field(default="remote", description="Audit execution mode: 'remote' or 'local'")
     status: AuditStatus
     created_at: datetime
     started_at: Optional[datetime] = None

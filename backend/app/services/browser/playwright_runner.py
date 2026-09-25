@@ -315,8 +315,12 @@ class PlaywrightBrowserRunner(BaseBrowserRunner):
 
             except Exception as nav_err:
                 page_load_success = False
-                error_message = str(nav_err)
-                logger.warning(f"[{viewport.name}_NAVIGATION_FAIL] Error loading {url}: {nav_err}")
+                raw_err = str(nav_err)
+                if any(k in raw_err for k in ("ERR_CONNECTION_REFUSED", "connection refused", "failed to navigate", "ERR_NAME_NOT_RESOLVED")) and any(lh in url.lower() for lh in ("localhost", "127.0.0.1", "0.0.0.0")):
+                    error_message = f"Unable to connect to the local website. Make sure the development server is running and accessible at {url}."
+                else:
+                    error_message = raw_err
+                logger.warning(f"[{viewport.name}_NAVIGATION_FAIL] Error loading {url}: {error_message}")
 
             # Capture Full Page Screenshot
             try:

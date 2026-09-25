@@ -121,6 +121,7 @@ export interface AuditResult {
   audit_id: string;
   target_url?: string;
   url: string;
+  mode?: 'remote' | 'local';
   status: AuditStatus;
   created_at: string;
   started_at?: string;
@@ -136,6 +137,7 @@ export interface AuditResult {
 
 export interface CreateAuditRequest {
   url: string;
+  mode?: 'remote' | 'local';
   viewports?: string[];
   baseline_audit_id?: string;
   project_id?: string;
@@ -158,6 +160,7 @@ export interface AuditSummaryItem {
   audit_id: string;
   project_id?: string;
   target_url: string;
+  mode?: 'remote' | 'local';
   status: AuditStatus;
   created_at: string;
   completed_at?: string;
