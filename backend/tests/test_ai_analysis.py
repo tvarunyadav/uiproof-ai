@@ -10,9 +10,11 @@ from app.services.ai.interface import AINotConfiguredError, AIProviderError, Bas
 from app.services.ai.openai_provider import OpenAILLMProvider
 
 
+import uuid
+
 def setup_sample_audit():
     """Helper to populate in-memory audit DB with a sample audit and deterministic issue."""
-    audit_id = "test-audit-ai-123"
+    audit_id = f"test-audit-ai-{uuid.uuid4().hex[:8]}"
     issue = Issue(
         issue_id="UI-OVERFLOW-MOBILE",
         category=IssueCategory.RESPONSIVE,

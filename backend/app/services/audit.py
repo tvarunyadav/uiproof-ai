@@ -300,6 +300,8 @@ class AuditEngineService:
             else:
                 audit_model.target_url = audit_result.target_url or audit_result.url
                 audit_model.status = status_str
+                if baseline_audit_id:
+                    audit_model.baseline_audit_id = baseline_audit_id
                 audit_model.completed_at = audit_result.completed_at
                 audit_model.stats = stats_dict
                 audit_model.evidence = evidence_dict
