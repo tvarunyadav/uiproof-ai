@@ -6,8 +6,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from app.main import app
 from app.db.session import Base
+from app.db.models import UserModel, ProjectModel, AuditModel, IssueModel, AIAnalysisModel, ArtifactModel
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 @pytest.fixture
 async def async_client():
@@ -19,9 +21,12 @@ async def async_client():
 def db_session():
     engine = create_engine(
         "sqlite:///:memory:",
-        connect_args={"check_same_thread": False}
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
+    # Debug table creation
+    # print("DEBUG TABLES:", list(Base.metadata.tables.keys()))
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
     try:
