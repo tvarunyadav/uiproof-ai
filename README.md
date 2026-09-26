@@ -53,59 +53,84 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 
 ### Production Deployment Setup
 
-> **Note**: While production configuration hooks and environment hardening are implemented, deploying to a cloud platform requires provisioning managed database services (PostgreSQL) and setting runtime environment variables.
+#### A. Frontend Deployment (Vercel)
+Deploy the `frontend/` directory as a Vercel project:
+- **Root Directory**: `frontend`
+- **Framework Preset**: Vite
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+- **Required Environment Variable**:
+  ```ini
+  VITE_API_BASE_URL=https://YOUR-BACKEND-DOMAIN
+  ```
+  *Note*: `VITE_API_BASE_URL` must point to your deployed FastAPI backend API base URL (e.g. `https://your-backend.onrender.com/api/v1` or `https://your-backend.onrender.com`).
 
-#### Production Backend Configuration (`ENVIRONMENT=production`)
-In production mode (`ENVIRONMENT=production`), the application enforces strict security validation at startup:
+#### B. Backend Deployment (Render / Railway)
+Deploy the `backend/` directory as a Web Service on Render or Railway:
+- **Environment**: Python 3.10+
+- **Build Command**:
+  ```bash
+  pip install -r requirements.txt && playwright install --with-deps chromium
+  ```
+- **Start Command**:
+  ```bash
+  uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+  ```
+- **System Requirements**: Python 3.10+, PostgreSQL, Playwright Chromium, and environment variables. Uvicorn is recommended to run with `--workers 1` because each headless Chromium audit instance requires dedicated CPU and RAM resources.
 
+#### C. Database Setup & Alembic Migrations (PostgreSQL)
+Provision a managed PostgreSQL database (Supabase, Neon, Render Postgres, Railway Postgres):
+- Set `DATABASE_URL` environment variable:
+  ```ini
+  DATABASE_URL=postgresql://user:password@pg-host:5432/uiproof_db
+  ```
+  *(URI schemes starting with `postgres://` are automatically normalized to `postgresql://` at runtime).*
+- Apply database migrations before launching the application:
+  ```bash
+  cd backend
+  alembic upgrade head
+  ```
+
+#### D. Required Backend Environment Variables
+Set the following environment variables in your cloud platform settings (never commit real secrets to Git):
 ```ini
 ENVIRONMENT=production
 HOST=0.0.0.0
 PORT=8000
 LOG_LEVEL=INFO
-CORS_ORIGINS=https://your-app-domain.vercel.app,https://qa.yourdomain.com
-DATABASE_URL=postgresql://user:password@pg-host:5432/uiproof_db
-JWT_SECRET_KEY=a-very-long-random-cryptographically-secure-secret-key-32chars
+DATABASE_URL=postgresql://user:password@host:5432/uiproof_db
+JWT_SECRET_KEY=a-cryptographically-secure-random-32char-string
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+CORS_ORIGINS=https://your-app-domain.vercel.app
 LLM_PROVIDER=openai
-LLM_API_KEY=sk-proj-prod-key-here
+LLM_API_KEY=sk-proj-your-api-key-here
 ARTIFACTS_DIR=backend/artifacts
 ```
 
-#### Production Backend Hardening Rules
-- **Host**: Defaults to `0.0.0.0` when `ENVIRONMENT=production` to bind to platform container networks.
-- **Port**: Respects platform-provided `PORT` environment variables.
-- **JWT Secret**: The app will fail to start if `JWT_SECRET_KEY` is missing or uses the development default placeholder.
-- **CORS Hardening**: Wildcards (`*`) and `localhost` origins are disallowed in production. Explicit production domains must be specified in `CORS_ORIGINS`.
-- **Database Migration**: Do not rely on `Base.metadata.create_all()`. Apply schema changes using Alembic:
-  ```bash
-  cd backend
-  alembic upgrade head
-  ```
-- **Playwright Installation**: Install Playwright Chromium with system dependencies during the build/container build step (NOT at app startup):
-  ```bash
-  playwright install chromium --with-deps
-  ```
-- **Single Worker Recommendation**: Run Uvicorn with a single worker (`--workers 1`) initially. Each headless Chromium audit instance requires significant CPU/memory resources:
-  ```bash
-  uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
-  ```
-- **Ephemeral Storage Notice**: Screenshots and artifacts are stored on the local disk at `ARTIFACTS_DIR`. On ephemeral container platforms (Render, Heroku, Railway without persistent volumes), artifacts are reset upon container restart/redeploy.
+#### E. Production CORS Configuration
+- **`CORS_ORIGINS`**: Must explicitly contain your deployed Vercel frontend origin (e.g. `https://your-app-domain.vercel.app`).
+- Wildcards (`*`) and `localhost`/`127.0.0.1` origins are automatically stripped and rejected at backend startup when `ENVIRONMENT=production`. Do NOT use wildcard CORS in production.
 
-#### Production Frontend Configuration
-When building the production static bundle, configure `VITE_API_BASE_URL` to point to the deployed backend URL:
+#### F. Playwright Chromium Installation
+- Playwright Chromium must be installed with Linux system dependencies during the build/container creation step:
+  ```bash
+  playwright install --with-deps chromium
+  ```
 
-```ini
-VITE_API_BASE_URL=https://api.yourdomain.com
-```
+#### G. Local vs Remote Audit Mode Configuration
+- **Development (`ENVIRONMENT=development`)**:
+  - **Local Audit Mode**: Can audit local targets (`http://localhost:<port>`, `http://127.0.0.1:<port>`).
+  - **Remote Audit Mode**: Audits public web applications.
+- **Production (`ENVIRONMENT=production`)**:
+  - **Local Audit Mode**: Strictly blocked to prevent security risks.
+  - **Remote Audit Mode**: Intended exclusively for public target URLs (SSRF protections actively block loopback, private IP ranges, and cloud metadata endpoints `169.254.169.254`).
 
-Build command:
-```bash
-cd frontend
-npm run build
-```
-The output in `frontend/dist/` can be served via Vercel, Netlify, Cloudflare Pages, or Nginx.
+#### H. Artifact & Screenshot Storage Warning
+- **Current Implementation**: Screenshots, DOM metrics, and audit evidence artifacts are saved to the configured local filesystem directory (`ARTIFACTS_DIR`).
+- **Cloud Storage Limitations**: Ephemeral cloud hosts (Render, Railway, Heroku without persistent disk mounts) will reset local filesystem storage upon instance restarts or redeployments, causing previously generated screenshots to become unavailable.
+- **MVP Deployment**: For initial MVP deployments, persistent disk volume attachments or transient screenshot usage is acceptable depending on platform configuration.
+- **Long-Term Production Recommendation**: Upgrade storage adapter to S3-compatible cloud object storage (Cloudflare R2, AWS S3, or Supabase Storage).
 
 ---
 
