@@ -19,7 +19,8 @@ from app.config import settings
 config = context.config
 
 # Override default URL in config with application setting
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL or settings.POSTGRES_URI)
+db_url_escaped = (settings.DATABASE_URL or settings.POSTGRES_URI).replace("%", "%%")
+config.set_main_option("sqlalchemy.url", db_url_escaped)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
