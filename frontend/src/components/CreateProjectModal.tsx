@@ -56,34 +56,36 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-xl bg-slate-900 border border-slate-800 shadow-2xl p-6 relative">
+      <div className="w-full max-w-md rounded-xl bg-surface border border-border shadow-2xl p-6 relative font-sans">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+          className="absolute top-4 right-4 text-text-muted hover:text-text-primary transition-colors p-1 rounded hover:bg-surface-raised"
+          aria-label="Close modal"
         >
           <X className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+          <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent">
             <FolderPlus className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-white">Create New Project</h2>
-            <p className="text-xs text-slate-400">Organize web application QA audit runs</p>
+            <h2 className="text-lg font-semibold text-text-primary">Create New Project</h2>
+            <p className="text-xs text-text-muted">Organize web application QA audit runs</p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 text-xs bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg">
+          <div className="mb-4 p-3 text-xs bg-status-error/10 border border-status-error/20 text-status-error rounded-lg">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Project Name</label>
+            <label htmlFor="modal-project-name" className="block text-xs font-medium text-text-secondary mb-1">Project Name</label>
             <Input
+              id="modal-project-name"
               placeholder="e.g. Acme Marketing Site"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -92,8 +94,9 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Target Application URL</label>
+            <label htmlFor="modal-target-url" className="block text-xs font-medium text-text-secondary mb-1">Target Application URL</label>
             <Input
+              id="modal-target-url"
               placeholder="e.g. https://example.com"
               value={targetUrl}
               onChange={(e) => setTargetUrl(e.target.value)}

@@ -18,8 +18,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !password) {
-      setError('Please enter both email and password.');
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    if (!password) {
+      setError('Password is required.');
       return;
     }
 
@@ -27,13 +32,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
     setError(null);
 
     try {
-      const tokenRes = await loginUser({ email, password });
+      const tokenRes = await loginUser({ email: cleanEmail, password });
       localStorage.setItem('uiproof_token', tokenRes.access_token);
       const userProfile = await getMeProfile();
       onSuccess(userProfile);
     } catch (err: any) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        setError(err.message || 'Invalid credentials.');
       } else {
         setError(err.message || 'Authentication failed. Please try again.');
       }
@@ -46,17 +51,18 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
-        <div className="bg-rose-950/40 border border-rose-800/50 text-rose-300 text-sm p-3 rounded-lg flex items-center gap-2 animate-fadeIn">
-          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span>{error}</span>
+        <div className="bg-error/10 border border-error/20 text-error text-sm p-3 rounded-lg flex items-center gap-2.5 animate-fadeIn">
+          <AlertCircle className="w-4 h-4 text-error shrink-0" />
+          <span className="text-xs sm:text-sm font-medium">{error}</span>
         </div>
       )}
 
       <div>
-        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+        <label htmlFor="login-email" className="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5">
           Email Address
         </label>
         <Input
+          id="login-email"
           type="email"
           placeholder="developer@company.com"
           value={email}
@@ -64,15 +70,16 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
           disabled={isLoading}
           required
           autoComplete="email"
-          className="w-full bg-slate-900 border-slate-800 text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          className="w-full bg-surface-raised border-border text-text-primary placeholder-text-muted focus:border-primary focus:ring-1 focus:ring-primary"
         />
       </div>
 
       <div>
-        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+        <label htmlFor="login-password" className="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1.5">
           Password
         </label>
         <Input
+          id="login-password"
           type="password"
           placeholder="••••••••"
           value={password}
@@ -80,14 +87,14 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
           disabled={isLoading}
           required
           autoComplete="current-password"
-          className="w-full bg-slate-900 border-slate-800 text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          className="w-full bg-surface-raised border-border text-text-primary placeholder-text-muted focus:border-primary focus:ring-1 focus:ring-primary"
         />
       </div>
 
       <Button
         type="submit"
         disabled={isLoading}
-        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg shadow-sm transition-all duration-150 flex items-center justify-center gap-2 text-sm"
+        className="w-full py-2.5 bg-primary hover:bg-primary-hover text-white font-medium rounded-lg shadow-sm transition-all duration-150 flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? (
           <>
@@ -103,13 +110,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegis
       </Button>
 
       <div className="pt-2 text-center">
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-text-muted">
           Don't have an account?{' '}
           <button
             type="button"
             onClick={onSwitchToRegister}
             disabled={isLoading}
-            className="text-indigo-400 hover:text-indigo-300 font-medium underline underline-offset-2 transition-colors ml-1"
+            className="text-accent hover:underline font-medium transition-colors ml-1 focus:outline-none focus:ring-1 focus:ring-primary rounded"
           >
             Create account
           </button>

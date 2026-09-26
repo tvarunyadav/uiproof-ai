@@ -12,16 +12,17 @@ export default {
         surface: {
           DEFAULT: '#111113',
           raised: '#18181B',
-          hover: '#222225',
+          hover: '#27272A',
         },
         border: {
           DEFAULT: '#27272A',
+          strong: '#3F3F46',
           subtle: '#1F1F23',
         },
         accent: {
           DEFAULT: '#6366F1',
           hover: '#818CF8',
-          subtle: 'rgba(99, 102, 241, 0.1)',
+          subtle: 'rgba(99, 102, 241, 0.12)',
         },
         status: {
           success: '#22C55E',
@@ -31,8 +32,8 @@ export default {
         },
         text: {
           primary: '#FAFAFA',
-          secondary: '#D4D4D8',
-          muted: '#A1A1AA',
+          secondary: '#A1A1AA',
+          muted: '#71717A',
         },
       },
       fontFamily: {
@@ -42,12 +43,13 @@ export default {
       borderRadius: {
         sm: '4px',
         DEFAULT: '6px',
-        md: '8px',
-        lg: '10px',
+        md: '6px',
+        lg: '8px',
+        xl: '10px',
       },
       boxShadow: {
-        subtle: '0 1px 2px 0 rgba(0, 0, 0, 0.4)',
-        glow: '0 0 15px -3px rgba(99, 102, 241, 0.2)',
+        subtle: '0 1px 2px 0 rgba(0, 0, 0, 0.5)',
+        glow: '0 0 15px -3px rgba(99, 102, 241, 0.25)',
       },
     },
   },

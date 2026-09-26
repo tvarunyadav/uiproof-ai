@@ -36,33 +36,34 @@ export const AuditHistorySidebar: React.FC<AuditHistorySidebarProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs">
-      <div className="w-full max-w-md bg-slate-950 border-l border-slate-800 shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-200">
+    <div className="fixed inset-0 z-50 flex justify-end bg-background/80 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-surface border-l border-border shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-200 font-sans">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-surface-raised/60">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+            <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent">
               <History className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-white">Audit History</h2>
-              <p className="text-[11px] text-slate-400">
+              <h2 className="text-sm font-semibold text-text-primary">Audit History</h2>
+              <p className="text-[11px] text-text-muted">
                 {projectName ? `Project: ${projectName}` : 'All persistent audit runs'}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+            className="text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-surface-raised transition-colors"
+            aria-label="Close sidebar"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Audit List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-xs">
           {audits.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 text-xs">
+            <div className="text-center py-12 text-text-muted text-xs">
               No audit runs found for this view.
             </div>
           ) : (
@@ -77,20 +78,20 @@ export const AuditHistorySidebar: React.FC<AuditHistorySidebarProps> = ({
                   }}
                   className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
                     isSelected
-                      ? 'bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/20'
-                      : 'bg-slate-900/80 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900'
+                      ? 'bg-accent/10 border-accent/40 ring-1 ring-accent/20'
+                      : 'bg-surface-raised/80 border-border hover:border-border-strong hover:bg-surface-raised'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-xs font-mono font-medium text-slate-200 truncate">
+                      <span className="text-xs font-mono font-medium text-text-primary truncate">
                         {item.target_url.replace(/^https?:\/\//, '')}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       {item.baseline_audit_id && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent/10 text-accent border border-accent/20">
                           <GitCompare className="w-2.5 h-2.5" />
                           Retest
                         </span>
@@ -99,8 +100,8 @@ export const AuditHistorySidebar: React.FC<AuditHistorySidebarProps> = ({
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-full ${
                           item.status === 'completed'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                            ? 'bg-status-success/10 text-status-success border border-status-success/20'
+                            : 'bg-status-error/10 text-status-error border border-status-error/20'
                         }`}
                       >
                         {item.status === 'completed' ? (
@@ -113,19 +114,19 @@ export const AuditHistorySidebar: React.FC<AuditHistorySidebarProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-800/60 mt-2">
+                  <div className="flex items-center justify-between text-[11px] text-text-muted pt-1 border-t border-border/60 mt-2">
                     <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-500" />
+                      <Clock className="w-3 h-3 text-text-muted" />
                       <span>{formatDate(item.created_at)}</span>
                     </div>
 
                     <div className="flex items-center gap-2">
                       {item.critical_count > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-mono">
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-status-error/10 text-status-error border border-status-error/20 font-mono">
                           {item.critical_count} critical
                         </span>
                       )}
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono">
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-background text-text-secondary font-mono border border-border">
                         {item.total_issues} issues
                       </span>
                     </div>
