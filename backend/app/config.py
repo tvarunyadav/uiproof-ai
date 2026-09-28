@@ -6,6 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEV_PLACEHOLDER_JWT_SECRET = "change-this-development-secret-key-32chars"
 
 
+def normalize_db_url(url: Union[str, None]) -> Union[str, None]:
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
+
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "UIProof AI"
     VERSION: str = "0.1.0"
@@ -72,10 +82,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_and_normalize_configuration(self) -> "Settings":
-        # Normalize DATABASE_URL (postgres:// -> postgresql://)
+        # Normalize database URLs to use postgresql+psycopg2 driver for PostgreSQL
         if self.DATABASE_URL:
-            if self.DATABASE_URL.startswith("postgres://"):
-                self.DATABASE_URL = self.DATABASE_URL.replace("postgres://", "postgresql://", 1)
+            self.DATABASE_URL = normalize_db_url(self.DATABASE_URL)
+        if self.POSTGRES_URI:
+            self.POSTGRES_URI = normalize_db_url(self.POSTGRES_URI)
 
         if self.ENVIRONMENT.lower() == "production":
             # Default host to 0.0.0.0 in production if left at 127.0.0.1

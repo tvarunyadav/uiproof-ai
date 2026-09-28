@@ -190,3 +190,44 @@ def test_artifact_references_audit(db_session):
     assert retrieved_artifact.audit.audit_id == "audit_with_artifact"
     assert retrieved_artifact in audit.artifacts
     assert retrieved_artifact.file_path == "/artifacts/audits/audit_with_artifact/desktop.png"
+
+
+def test_database_url_normalization():
+    """
+    Verify database URL normalization rules:
+    1. postgresql:// becomes postgresql+psycopg2://
+    2. postgres:// becomes postgresql+psycopg2://
+    3. already-correct postgresql+psycopg2:// remains unchanged
+    4. percent-encoded credentials remain intact
+    5. SQLite URLs remain unchanged
+    """
+    from app.config import normalize_db_url, Settings
+
+    # Rule 1: postgresql:// -> postgresql+psycopg2://
+    raw_postgresql = "postgresql://postgres:secret@db.supabase.co:5432/postgres"
+    expected_postgresql = "postgresql+psycopg2://postgres:secret@db.supabase.co:5432/postgres"
+    assert normalize_db_url(raw_postgresql) == expected_postgresql
+    assert Settings(DATABASE_URL=raw_postgresql).DATABASE_URL == expected_postgresql
+
+    # Rule 2: postgres:// -> postgresql+psycopg2://
+    raw_postgres = "postgres://user:pass@ep-pooler.aws.neon.tech/neondb?sslmode=require"
+    expected_postgres = "postgresql+psycopg2://user:pass@ep-pooler.aws.neon.tech/neondb?sslmode=require"
+    assert normalize_db_url(raw_postgres) == expected_postgres
+    assert Settings(DATABASE_URL=raw_postgres).DATABASE_URL == expected_postgres
+
+    # Rule 3: postgresql+psycopg2:// remains unchanged
+    already_correct = "postgresql+psycopg2://user:pass@host:5432/db"
+    assert normalize_db_url(already_correct) == already_correct
+    assert Settings(DATABASE_URL=already_correct).DATABASE_URL == already_correct
+
+    # Rule 4: percent-encoded credentials remain intact
+    encoded_url = "postgresql://user%40domain:p%40ssw%23rd!@host.com:5432/db_name"
+    expected_encoded = "postgresql+psycopg2://user%40domain:p%40ssw%23rd!@host.com:5432/db_name"
+    assert normalize_db_url(encoded_url) == expected_encoded
+    assert Settings(DATABASE_URL=encoded_url).DATABASE_URL == expected_encoded
+
+    # Rule 5: SQLite URLs remain unchanged
+    sqlite_url = "sqlite:///./uiproof.db"
+    assert normalize_db_url(sqlite_url) == sqlite_url
+    assert Settings(DATABASE_URL=sqlite_url).DATABASE_URL == sqlite_url
+
