@@ -37,9 +37,12 @@ class Settings(BaseSettings):
         "*",
     ]
 
-    # Future AI provider settings
+    # AI provider settings
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: str = ""
+    GEMINI_API_KEY: Union[str, None] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+
 
     # Database Configuration
     DATABASE_URL: str = "sqlite:///./uiproof.db"

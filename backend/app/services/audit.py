@@ -27,6 +27,7 @@ from app.services.browser.interface import BaseBrowserRunner
 from app.services.browser.playwright_runner import PlaywrightBrowserRunner
 from app.services.ai.interface import BaseLLMProvider, StubLLMProvider, AINotConfiguredError, AIProviderError
 from app.services.ai.openai_provider import OpenAILLMProvider
+from app.services.ai import get_llm_provider
 from app.utils.security import validate_and_sanitize_url
 from app.config import settings
 
@@ -260,7 +261,7 @@ class AuditEngineService:
         ai_provider: Optional[BaseLLMProvider] = None,
     ):
         self.browser_runner = browser_runner or PlaywrightBrowserRunner()
-        self.ai_provider = ai_provider or OpenAILLMProvider()
+        self.ai_provider = ai_provider or get_llm_provider()
         self._audits_db: Dict[str, AuditResult] = {}
         try:
             init_db()
