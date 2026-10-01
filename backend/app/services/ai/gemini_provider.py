@@ -1,5 +1,8 @@
 import json
 import logging
+import random
+import asyncio
+import time
 import httpx
 from typing import List, Optional
 from app.config import settings
@@ -11,12 +14,14 @@ from app.services.ai.interface import BaseLLMProvider, AINotConfiguredError, AIP
 
 logger = logging.getLogger("uiproof.gemini_provider")
 
+TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
 
 class GeminiLLMProvider(BaseLLMProvider):
     """
     Real Google Gemini LLM Provider implementation for UIProof AI.
     Analyzes verified deterministic issues and produces evidence-grounded AI analysis payloads
-    using Google AI Studio's Gemini REST API.
+    using Google AI Studio's Gemini REST API with bounded exponential backoff for transient errors.
     """
 
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
@@ -125,27 +130,64 @@ class GeminiLLMProvider(BaseLLMProvider):
         # Ensure API key is NEVER logged or included in request URLs shown in error logs
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    api_url,
-                    headers={"Content-Type": "application/json"},
-                    json=payload
-                )
-
-                if response.status_code != 200:
-                    logger.error(f"Gemini API Error: HTTP status {response.status_code}")
-                    raise AIProviderError(f"LLM Provider returned HTTP {response.status_code}")
-
-                data = response.json()
+        max_attempts = 3
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for attempt in range(1, max_attempts + 1):
+                start_time = time.monotonic()
                 try:
-                    content_str = data["candidates"][0]["content"]["parts"][0]["text"]
-                    parsed_json = json.loads(content_str)
-                    return AIAnalysisDetails(**parsed_json)
-                except (KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError) as parse_err:
-                    logger.error(f"Gemini API Response Parsing Error: {type(parse_err).__name__}")
-                    raise AIProviderError("LLM Provider returned invalid JSON structure")
+                    response = await client.post(
+                        api_url,
+                        headers={"Content-Type": "application/json"},
+                        json=payload
+                    )
+                    duration = time.monotonic() - start_time
 
-        except (httpx.RequestError, httpx.TimeoutException) as net_err:
-            logger.error(f"Gemini API Network Failure: {type(net_err).__name__}")
-            raise AIProviderError("LLM Provider network failure or timeout")
+                    if response.status_code == 200:
+                        data = response.json()
+                        try:
+                            content_str = data["candidates"][0]["content"]["parts"][0]["text"]
+                            parsed_json = json.loads(content_str)
+                            return AIAnalysisDetails(**parsed_json)
+                        except (KeyError, IndexError, json.JSONDecodeError, TypeError, ValueError) as parse_err:
+                            logger.error(f"Gemini API Response Parsing Error: {type(parse_err).__name__}")
+                            raise AIProviderError("LLM Provider returned invalid JSON structure")
+
+                    status_code = response.status_code
+                    raw_body = response.text or ""
+                    body_snippet = raw_body[:500] + ("..." if len(raw_body) > 500 else "")
+                    if self.api_key and self.api_key in body_snippet:
+                        body_snippet = body_snippet.replace(self.api_key, "[REDACTED]")
+
+                    diag_msg = (
+                        f"status={status_code} | model={self.model_name} | "
+                        f"attempt={attempt}/{max_attempts} | duration={duration:.3f}s | "
+                        f"body={body_snippet}"
+                    )
+
+                    if status_code in TRANSIENT_STATUS_CODES and attempt < max_attempts:
+                        delay = (2.0 if attempt == 1 else 4.0) + random.uniform(0.0, 0.5)
+                        logger.warning(
+                            f"Gemini API transient failure ({diag_msg}). Retrying in {delay:.2f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        logger.error(f"Gemini API Error: {diag_msg}")
+                        raise AIProviderError(f"LLM Provider returned HTTP {status_code}")
+
+                except (httpx.RequestError, httpx.TimeoutException) as net_err:
+                    duration = time.monotonic() - start_time
+                    if attempt < max_attempts:
+                        delay = (2.0 if attempt == 1 else 4.0) + random.uniform(0.0, 0.5)
+                        logger.warning(
+                            f"Gemini API network failure ({type(net_err).__name__}) | model={self.model_name} | "
+                            f"attempt={attempt}/{max_attempts} | duration={duration:.3f}s. Retrying in {delay:.2f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        logger.error(
+                            f"Gemini API Network Failure after {max_attempts} attempts: {type(net_err).__name__} | "
+                            f"model={self.model_name} | duration={duration:.3f}s"
+                        )
+                        raise AIProviderError("LLM Provider network failure or timeout")

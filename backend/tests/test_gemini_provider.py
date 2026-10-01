@@ -192,9 +192,9 @@ async def test_gemini_http_404_not_found(sample_issue):
         assert SECRET_TEST_KEY not in str(exc_info.value)
 
 
-# J. HTTP 500/503 -> AIProviderError
+# J. HTTP 500/503 -> AIProviderError after 3 retries
 @pytest.mark.asyncio
-async def test_gemini_http_500_503_server_error(sample_issue):
+async def test_gemini_http_500_503_server_error_retries_exhausted(sample_issue):
     provider = GeminiLLMProvider(api_key=SECRET_TEST_KEY)
 
     for status_code in (500, 503):
@@ -202,24 +202,116 @@ async def test_gemini_http_500_503_server_error(sample_issue):
         mock_response.status_code = status_code
         mock_response.text = "Internal Server Error"
 
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock):
             mock_post.return_value = mock_response
             with pytest.raises(AIProviderError) as exc_info:
                 await provider.analyze_issue(sample_issue)
             assert f"HTTP {status_code}" in str(exc_info.value)
-            # L. Ensure secret key is not in exception text
+            assert mock_post.call_count == 3
             assert SECRET_TEST_KEY not in str(exc_info.value)
 
 
-
-# K. Timeout -> AIProviderError
+# K. Timeout -> AIProviderError after 3 retries
 @pytest.mark.asyncio
 async def test_gemini_timeout(sample_issue):
     provider = GeminiLLMProvider(api_key=SECRET_TEST_KEY)
 
-    with patch("httpx.AsyncClient.post", side_effect=httpx.TimeoutException("Connection timed out")):
+    with patch("httpx.AsyncClient.post", side_effect=httpx.TimeoutException("Connection timed out")) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock):
         with pytest.raises(AIProviderError) as exc_info:
             await provider.analyze_issue(sample_issue)
         assert "network failure or timeout" in str(exc_info.value)
-        # L. Ensure secret key is not in exception text
+        assert mock_post.call_count == 3
         assert SECRET_TEST_KEY not in str(exc_info.value)
+
+
+# Transient failure retry recovery test (503 then 200 OK success)
+@pytest.mark.asyncio
+async def test_gemini_transient_failure_retry_success(sample_issue):
+    provider = GeminiLLMProvider(api_key=SECRET_TEST_KEY)
+
+    mock_json_content = {
+        "summary": "Horizontal overflow on mobile.",
+        "likely_causes": ["Fixed width container."],
+        "investigation_hints": ["Inspect element."],
+        "expected_result": "No overflow.",
+        "constraints": ["Keep grid."],
+        "verification_steps": ["Check scrollWidth."],
+        "fix_prompt": "Fix width."
+    }
+
+    fail_resp = MagicMock()
+    fail_resp.status_code = 503
+
+    ok_resp = MagicMock()
+    ok_resp.status_code = 200
+    ok_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": json.dumps(mock_json_content)}]}}]
+    }
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        mock_post.side_effect = [fail_resp, ok_resp]
+        result = await provider.analyze_issue(sample_issue)
+
+        assert isinstance(result, AIAnalysisDetails)
+        assert result.summary == mock_json_content["summary"]
+        assert mock_post.call_count == 2
+        assert mock_sleep.call_count == 1
+
+
+# Non-transient failure (400, 401, 403, 404) immediately fails without retry
+@pytest.mark.asyncio
+async def test_gemini_non_transient_failure_no_retry(sample_issue):
+    provider = GeminiLLMProvider(api_key=SECRET_TEST_KEY)
+
+    for status_code in (400, 401, 403, 404):
+        fail_resp = MagicMock()
+        fail_resp.status_code = status_code
+        fail_resp.text = f"Error {status_code}"
+
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            mock_post.return_value = fail_resp
+            with pytest.raises(AIProviderError):
+                await provider.analyze_issue(sample_issue)
+
+            assert mock_post.call_count == 1
+            assert mock_sleep.call_count == 0
+
+
+# HTTP 503 specifically: retried 3 times, final 503 becomes AIProviderError, safe diagnostic logged without secret
+@pytest.mark.asyncio
+async def test_gemini_503_safe_diagnostic_logging(sample_issue, caplog):
+    provider = GeminiLLMProvider(api_key=SECRET_TEST_KEY, model_name="gemini-2.5-flash-lite")
+
+    mock_503_body = '{"error": {"code": 503, "message": "The model is currently overloaded.", "status": "UNAVAILABLE"}}'
+    mock_response = MagicMock()
+    mock_response.status_code = 503
+    mock_response.text = mock_503_body
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock):
+        mock_post.return_value = mock_response
+
+        with caplog.at_level("WARNING"):
+            with pytest.raises(AIProviderError) as exc_info:
+                await provider.analyze_issue(sample_issue)
+
+        # 1. 503 response is retried for 3 total attempts
+        assert mock_post.call_count == 3
+
+        # 2. Final 503 becomes AIProviderError
+        assert "LLM Provider returned HTTP 503" in str(exc_info.value)
+
+        log_text = caplog.text
+
+        # 3. API key is NEVER included in logs or exception
+        assert SECRET_TEST_KEY not in log_text
+        assert SECRET_TEST_KEY not in str(exc_info.value)
+
+        # 4. Safe diagnostic elements are present in log
+        assert "status=503" in log_text
+        assert "The model is currently overloaded" in log_text
+        assert "model=gemini-2.5-flash-lite" in log_text
+        assert "attempt=1/3" in log_text
+        assert "attempt=3/3" in log_text
+        assert "duration=" in log_text
+
+
