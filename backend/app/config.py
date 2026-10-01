@@ -39,9 +39,12 @@ class Settings(BaseSettings):
 
     # AI provider settings
     LLM_PROVIDER: str = "openai"
+    LLM_FALLBACK_PROVIDER: Union[str, None] = None
     LLM_API_KEY: str = ""
     GEMINI_API_KEY: Union[str, None] = None
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    GROQ_API_KEY: Union[str, None] = None
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
 
     # Database Configuration
