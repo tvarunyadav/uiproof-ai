@@ -101,9 +101,12 @@ async def test_gemini_successful_response(sample_issue):
         assert result.likely_causes == mock_json_content["likely_causes"]
         assert result.fix_prompt == mock_json_content["fix_prompt"]
 
-        # L. Ensure secret API key is present in call URL but safe
+        # Ensure secret API key is NOT in URL but sent via x-goog-api-key header
         called_url = mock_post.call_args[0][0]
-        assert "key=" in called_url
+        assert "key=" not in called_url
+        assert SECRET_TEST_KEY not in called_url
+        headers_sent = mock_post.call_args[1].get("headers", {})
+        assert headers_sent.get("x-goog-api-key") == SECRET_TEST_KEY
 
 
 # F. Invalid Gemini JSON -> AIProviderError
@@ -313,5 +316,43 @@ async def test_gemini_503_safe_diagnostic_logging(sample_issue, caplog):
         assert "attempt=1/3" in log_text
         assert "attempt=3/3" in log_text
         assert "duration=" in log_text
+
+
+# Regression test: verify TEST_GEMINI_SECRET_12345 NEVER appears in logs, exception messages, URLs, or HTTPX logs
+@pytest.mark.asyncio
+async def test_gemini_api_key_never_appears_in_logs(sample_issue, caplog):
+    fake_secret = "TEST_GEMINI_SECRET_12345"
+    provider = GeminiLLMProvider(api_key=fake_secret, model_name="gemini-3.8-flash")
+
+    mock_503_body = f'{{"error": {{"code": 503, "message": "Echoing fake key {fake_secret}", "status": "UNAVAILABLE"}}}}'
+    mock_response = MagicMock()
+    mock_response.status_code = 503
+    mock_response.text = mock_503_body
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, patch("asyncio.sleep", new_callable=AsyncMock):
+        mock_post.return_value = mock_response
+
+        with caplog.at_level("DEBUG"):
+            with pytest.raises(AIProviderError) as exc_info:
+                await provider.analyze_issue(sample_issue)
+
+        log_text = caplog.text
+
+        # 1. Fake secret key MUST NOT appear in logs (including diagnostic body redaction)
+        assert fake_secret not in log_text
+        assert "[REDACTED]" in log_text
+
+        # 2. Fake secret key MUST NOT appear in exception message
+        assert fake_secret not in str(exc_info.value)
+
+        # 3. URL MUST NOT contain key= or fake_secret
+        called_url = mock_post.call_args[0][0]
+        assert "key=" not in called_url
+        assert fake_secret not in called_url
+
+        # 4. Key is sent via x-goog-api-key header securely
+        headers_sent = mock_post.call_args[1].get("headers", {})
+        assert headers_sent.get("x-goog-api-key") == fake_secret
+
 
 

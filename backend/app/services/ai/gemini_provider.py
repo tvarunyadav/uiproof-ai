@@ -13,6 +13,8 @@ from app.schemas.ai import AIAnalysisDetails
 from app.services.ai.interface import BaseLLMProvider, AINotConfiguredError, AIProviderError
 
 logger = logging.getLogger("uiproof.gemini_provider")
+# Suppress httpx INFO request logs to prevent any potential header/URL leakage in production logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
@@ -127,8 +129,12 @@ class GeminiLLMProvider(BaseLLMProvider):
             }
         }
 
-        # Ensure API key is NEVER logged or included in request URLs shown in error logs
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
+        # Send API key in header (x-goog-api-key) so key is NEVER included in request URL or HTTPX request logs
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key
+        }
 
         max_attempts = 3
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -137,7 +143,7 @@ class GeminiLLMProvider(BaseLLMProvider):
                 try:
                     response = await client.post(
                         api_url,
-                        headers={"Content-Type": "application/json"},
+                        headers=headers,
                         json=payload
                     )
                     duration = time.monotonic() - start_time
