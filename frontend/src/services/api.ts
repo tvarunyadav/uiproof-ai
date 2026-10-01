@@ -343,3 +343,15 @@ export function getArtifactUrl(auditId: string, artifactPathOrId?: string): stri
   }
   return `${API_BASE_URL}/audits/${auditId}/artifacts/${artifactPathOrId}`;
 }
+
+export async function fetchArtifactBlob(auditId: string, artifactPathOrId?: string): Promise<string> {
+  if (!artifactPathOrId) throw new ApiError('Artifact identifier required.', 400);
+  const cleanArtifactId = artifactPathOrId.split('/').pop() || artifactPathOrId;
+  const response = await fetchWithAuth(`/audits/${auditId}/artifacts/${cleanArtifactId}`);
+  if (!response.ok) {
+    throw new ApiError(`Failed to fetch artifact image (${response.status})`, response.status);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+

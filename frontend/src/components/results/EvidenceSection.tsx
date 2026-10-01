@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Maximize2, Image as ImageIcon, ShieldAlert, Code } from 'lucide-react';
 import { Issue, ViewportAuditResult, AuditResult } from '../../types/audit';
-import { getArtifactUrl } from '../../services/api';
+import { fetchArtifactBlob } from '../../services/api';
 import { Badge } from '../ui/Badge';
 
 export interface EvidenceSectionProps {
@@ -18,9 +18,44 @@ export const EvidenceSection: React.FC<EvidenceSectionProps> = ({
   const isMobile = issue.viewport?.toLowerCase() === 'mobile';
   const vpResult: ViewportAuditResult | undefined = isMobile ? audit?.mobile : audit?.desktop;
 
-  const screenshotUrl = vpResult?.screenshot_artifact_id && audit
-    ? getArtifactUrl(audit.audit_id, vpResult.screenshot_artifact_id)
-    : null;
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [isLoadingBlob, setIsLoadingBlob] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    let activeUrl: string | null = null;
+
+    if (audit && vpResult?.screenshot_artifact_id) {
+      setIsLoadingBlob(true);
+      fetchArtifactBlob(audit.audit_id, vpResult.screenshot_artifact_id)
+        .then((url) => {
+          if (isMounted) {
+            activeUrl = url;
+            setBlobUrl(url);
+            setIsLoadingBlob(false);
+          } else {
+            URL.revokeObjectURL(url);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setBlobUrl(null);
+            setIsLoadingBlob(false);
+          }
+        });
+    } else {
+      setBlobUrl(null);
+      setIsLoadingBlob(false);
+    }
+
+    return () => {
+      isMounted = false;
+      if (activeUrl) {
+        URL.revokeObjectURL(activeUrl);
+      }
+    };
+  }, [audit?.audit_id, vpResult?.screenshot_artifact_id]);
+
 
   const isConsole = issue.category === 'console_error' || issue.category === 'console';
   const isNetwork = issue.category === 'network_failure' || issue.category === 'broken_resource';
@@ -120,19 +155,19 @@ export const EvidenceSection: React.FC<EvidenceSectionProps> = ({
       )}
 
       {/* Screenshot Artifact Preview */}
-      {screenshotUrl ? (
+      {blobUrl ? (
         <div className="flex flex-col gap-1.5">
           <span className="text-[10px] text-text-muted uppercase font-semibold">Viewport Screenshot Artifact</span>
           <div className="relative rounded overflow-hidden border border-border bg-background group">
             <img
-              src={screenshotUrl}
+              src={blobUrl}
               alt="Viewport Evidence Screenshot"
               className="w-full h-52 object-cover object-top transition-transform group-hover:scale-105"
             />
             {onSelectImage && (
               <button
                 type="button"
-                onClick={() => onSelectImage(screenshotUrl)}
+                onClick={() => onSelectImage(blobUrl)}
                 className="absolute inset-0 bg-background/70 backdrop-blur-sm opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 text-xs font-mono text-text-primary transition-opacity cursor-pointer"
               >
                 <Maximize2 className="w-4 h-4 text-accent" />
@@ -144,9 +179,10 @@ export const EvidenceSection: React.FC<EvidenceSectionProps> = ({
       ) : (
         <div className="p-4 rounded border border-dashed border-border bg-background text-center text-xs text-text-muted">
           <ImageIcon className="w-4 h-4 inline mr-2" />
-          No screenshot artifact available for this issue.
+          {isLoadingBlob ? 'Loading screenshot evidence...' : 'No screenshot artifact available for this issue.'}
         </div>
       )}
+
     </div>
   );
 };

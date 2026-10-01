@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2,
   Monitor,
@@ -11,7 +11,7 @@ import {
 import { Issue, AuditResult } from '../../types/audit';
 import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
-import { getArtifactUrl } from '../../services/api';
+import { fetchArtifactBlob } from '../../services/api';
 
 export type ComparisonCategoryType = 'fixed' | 'remaining' | 'new';
 
@@ -38,16 +38,66 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
   const baselineVpData = vpName === 'mobile' ? baselineAudit?.mobile : (vpName === 'desktop' ? baselineAudit?.desktop : null);
   const retestVpData = vpName === 'mobile' ? retestAudit?.mobile : (vpName === 'desktop' ? retestAudit?.desktop : null);
 
-  const baselineScreenshotPath = baselineVpData?.screenshot_url || baselineVpData?.screenshot_artifact_id;
-  const retestScreenshotPath = retestVpData?.screenshot_url || retestVpData?.screenshot_artifact_id;
+  const baselineScreenshotPath = baselineVpData?.screenshot_artifact_id || baselineVpData?.screenshot_url;
+  const retestScreenshotPath = retestVpData?.screenshot_artifact_id || retestVpData?.screenshot_url;
 
-  const baselineScreenshotUrl = baselineAudit && baselineScreenshotPath
-    ? getArtifactUrl(baselineAudit.audit_id, baselineScreenshotPath)
-    : '';
+  const [baselineBlobUrl, setBaselineBlobUrl] = useState<string>('');
+  const [retestBlobUrl, setRetestBlobUrl] = useState<string>('');
 
-  const retestScreenshotUrl = retestAudit && retestScreenshotPath
-    ? getArtifactUrl(retestAudit.audit_id, retestScreenshotPath)
-    : '';
+  useEffect(() => {
+    let isMounted = true;
+    let activeUrl: string | null = null;
+
+    if (baselineAudit && baselineScreenshotPath) {
+      fetchArtifactBlob(baselineAudit.audit_id, baselineScreenshotPath)
+        .then((url) => {
+          if (isMounted) {
+            activeUrl = url;
+            setBaselineBlobUrl(url);
+          } else {
+            URL.revokeObjectURL(url);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setBaselineBlobUrl('');
+        });
+    } else {
+      setBaselineBlobUrl('');
+    }
+
+    return () => {
+      isMounted = false;
+      if (activeUrl) URL.revokeObjectURL(activeUrl);
+    };
+  }, [baselineAudit?.audit_id, baselineScreenshotPath]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let activeUrl: string | null = null;
+
+    if (retestAudit && retestScreenshotPath) {
+      fetchArtifactBlob(retestAudit.audit_id, retestScreenshotPath)
+        .then((url) => {
+          if (isMounted) {
+            activeUrl = url;
+            setRetestBlobUrl(url);
+          } else {
+            URL.revokeObjectURL(url);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setRetestBlobUrl('');
+        });
+    } else {
+      setRetestBlobUrl('');
+    }
+
+    return () => {
+      isMounted = false;
+      if (activeUrl) URL.revokeObjectURL(activeUrl);
+    };
+  }, [retestAudit?.audit_id, retestScreenshotPath]);
+
 
   const getCategoryBadge = () => {
     switch (categoryType) {
@@ -150,16 +200,16 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
                   )}
 
                   {/* Baseline screenshot artifact */}
-                  {baselineScreenshotUrl && onSelectImage && (
+                  {baselineBlobUrl && onSelectImage && (
                     <div className="relative group rounded border border-border overflow-hidden bg-surface-raised mt-1">
                       <img
-                        src={baselineScreenshotUrl}
+                        src={baselineBlobUrl}
                         alt="Baseline Screenshot"
                         className="w-full h-32 object-cover object-top opacity-90 group-hover:opacity-100 transition-opacity"
                       />
                       <button
                         type="button"
-                        onClick={() => onSelectImage(baselineScreenshotUrl)}
+                        onClick={() => onSelectImage(baselineBlobUrl)}
                         className="absolute bottom-2 right-2 p-1.5 rounded bg-background/80 hover:bg-background text-text-primary border border-border text-[10px] flex items-center gap-1 backdrop-blur-sm cursor-pointer"
                       >
                         <Maximize2 className="w-3 h-3" />
@@ -203,16 +253,16 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
                   )}
 
                   {/* Retest screenshot artifact */}
-                  {retestScreenshotUrl && onSelectImage && (
+                  {retestBlobUrl && onSelectImage && (
                     <div className="relative group rounded border border-border overflow-hidden bg-surface-raised mt-1">
                       <img
-                        src={retestScreenshotUrl}
+                        src={retestBlobUrl}
                         alt="Retest Screenshot"
                         className="w-full h-32 object-cover object-top opacity-90 group-hover:opacity-100 transition-opacity"
                       />
                       <button
                         type="button"
-                        onClick={() => onSelectImage(retestScreenshotUrl)}
+                        onClick={() => onSelectImage(retestBlobUrl)}
                         className="absolute bottom-2 right-2 p-1.5 rounded bg-background/80 hover:bg-background text-text-primary border border-border text-[10px] flex items-center gap-1 backdrop-blur-sm cursor-pointer"
                       >
                         <Maximize2 className="w-3 h-3" />
@@ -222,6 +272,7 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
                   )}
                 </div>
               )}
+
             </div>
           </div>
         </div>
