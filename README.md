@@ -487,3 +487,20 @@ Developed as an advanced AI-powered web quality assurance platform demonstration
 
 * **Author**: Varun Yadav ([@tvarunyadav](https://github.com/tvarunyadav))
 * **Repository**: [https://github.com/tvarunyadav/uiproof-ai](https://github.com/tvarunyadav/uiproof-ai)
+
+---
+
+## License
+
+UIProof AI is source-available for personal, educational, academic,
+research, evaluation, and other non-commercial purposes.
+
+**Commercial use is not permitted without prior written authorization.**
+
+Organizations or individuals interested in using UIProof AI or substantial
+portions of its source code commercially must obtain a separate commercial
+license from the copyright holder.
+
+See the [LICENSE](LICENSE) file for the complete terms.
+
+Copyright © 2026 Varun Yadav T. All rights reserved.
