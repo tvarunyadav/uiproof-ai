@@ -204,3 +204,34 @@ def test_10_deduplication():
 
     # Duplicate identical console error should be deduplicated to 1
     assert len(console_issues) == 1
+
+
+def test_11_mobile_390px_overflow_logic():
+    # Test 390px viewport with document scrollWidth 480px -> UI-OVERFLOW-MOBILE created
+    vp_mobile = BrowserViewport(name="Mobile", width=390, height=844, device_scale_factor=2.0)
+    vp_res_overflow = ViewportAuditResult(
+        viewport=vp_mobile,
+        page=PageMetadata(initial_url="https://example.com", final_url="https://example.com/", title="Test Site", http_status=200, page_load_success=True),
+        responsive=ResponsiveMetrics(viewport_width=390, viewport_height=844, document_scroll_width=480, document_client_width=390, horizontal_overflow=90),
+        dom_metadata=DOMMetadataEvidence(title="Test", has_title=True, meta_description="Desc", has_meta_description=True)
+    )
+    evidence = BrowserEvidence(url="https://example.com", timestamp=datetime.now(timezone.utc), mobile=vp_res_overflow)
+    findings = create_deterministic_findings(evidence)
+    overflow_issues = [f for f in findings if f.category == IssueCategory.RESPONSIVE]
+    assert len(overflow_issues) == 1
+    assert overflow_issues[0].issue_id == "UI-OVERFLOW-MOBILE"
+    assert overflow_issues[0].severity == IssueSeverity.HIGH
+    assert "90px" in overflow_issues[0].description
+
+    # Test 390px viewport with document scrollWidth <= viewport clientWidth -> no overflow issue created
+    vp_res_clean = ViewportAuditResult(
+        viewport=vp_mobile,
+        page=PageMetadata(initial_url="https://example.com", final_url="https://example.com/", title="Test Site", http_status=200, page_load_success=True),
+        responsive=ResponsiveMetrics(viewport_width=390, viewport_height=844, document_scroll_width=390, document_client_width=390, horizontal_overflow=0),
+        dom_metadata=DOMMetadataEvidence(title="Test", has_title=True, meta_description="Desc", has_meta_description=True)
+    )
+    evidence_clean = BrowserEvidence(url="https://example.com", timestamp=datetime.now(timezone.utc), mobile=vp_res_clean)
+    findings_clean = create_deterministic_findings(evidence_clean)
+    overflow_clean = [f for f in findings_clean if f.category == IssueCategory.RESPONSIVE]
+    assert len(overflow_clean) == 0
+

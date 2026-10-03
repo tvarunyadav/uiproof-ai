@@ -32,11 +32,11 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
-  const isMobile = issue.viewport?.toLowerCase() === 'mobile';
-  const vpName = issue.viewport?.toLowerCase();
+  const vpName = (issue.viewport || '').toLowerCase();
+  const isMobile = vpName === 'mobile' || issue.issue_id?.toLowerCase().includes('mobile') || (issue.title && issue.title.toLowerCase().includes('mobile'));
 
-  const baselineVpData = vpName === 'mobile' ? baselineAudit?.mobile : (vpName === 'desktop' ? baselineAudit?.desktop : null);
-  const retestVpData = vpName === 'mobile' ? retestAudit?.mobile : (vpName === 'desktop' ? retestAudit?.desktop : null);
+  const baselineVpData = isMobile ? (baselineAudit?.mobile || baselineAudit?.desktop) : (baselineAudit?.desktop || baselineAudit?.mobile);
+  const retestVpData = isMobile ? (retestAudit?.mobile || retestAudit?.desktop) : (retestAudit?.desktop || retestAudit?.mobile);
 
   const baselineScreenshotPath = baselineVpData?.screenshot_artifact_id || baselineVpData?.screenshot_url;
   const retestScreenshotPath = retestVpData?.screenshot_artifact_id || retestVpData?.screenshot_url;
@@ -201,18 +201,18 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
 
                   {/* Baseline screenshot artifact */}
                   {baselineBlobUrl && onSelectImage && (
-                    <div className="relative group rounded border border-border overflow-hidden bg-surface-raised mt-1">
+                    <div className="relative group rounded border border-border overflow-hidden bg-surface-dark mt-1 flex items-center justify-center p-2 min-h-[140px] max-h-[200px]">
                       <img
                         src={baselineBlobUrl}
                         alt="Baseline Screenshot"
-                        className="w-full h-32 object-cover object-top opacity-90 group-hover:opacity-100 transition-opacity"
+                        className="max-h-[180px] w-auto max-w-full object-contain mx-auto rounded shadow-sm opacity-90 group-hover:opacity-100 transition-opacity"
                       />
                       <button
                         type="button"
                         onClick={() => onSelectImage(baselineBlobUrl)}
                         className="absolute bottom-2 right-2 p-1.5 rounded bg-background/80 hover:bg-background text-text-primary border border-border text-[10px] flex items-center gap-1 backdrop-blur-sm cursor-pointer"
                       >
-                        <Maximize2 className="w-3 h-3" />
+                        <Maximize2 className="w-3 h-3 text-accent" />
                         <span>Baseline Screenshot</span>
                       </button>
                     </div>
@@ -254,18 +254,18 @@ export const ComparisonIssueCard: React.FC<ComparisonIssueCardProps> = ({
 
                   {/* Retest screenshot artifact */}
                   {retestBlobUrl && onSelectImage && (
-                    <div className="relative group rounded border border-border overflow-hidden bg-surface-raised mt-1">
+                    <div className="relative group rounded border border-border overflow-hidden bg-surface-dark mt-1 flex items-center justify-center p-2 min-h-[140px] max-h-[200px]">
                       <img
                         src={retestBlobUrl}
                         alt="Retest Screenshot"
-                        className="w-full h-32 object-cover object-top opacity-90 group-hover:opacity-100 transition-opacity"
+                        className="max-h-[180px] w-auto max-w-full object-contain mx-auto rounded shadow-sm opacity-90 group-hover:opacity-100 transition-opacity"
                       />
                       <button
                         type="button"
                         onClick={() => onSelectImage(retestBlobUrl)}
                         className="absolute bottom-2 right-2 p-1.5 rounded bg-background/80 hover:bg-background text-text-primary border border-border text-[10px] flex items-center gap-1 backdrop-blur-sm cursor-pointer"
                       >
-                        <Maximize2 className="w-3 h-3" />
+                        <Maximize2 className="w-3 h-3 text-accent" />
                         <span>Retest Screenshot</span>
                       </button>
                     </div>

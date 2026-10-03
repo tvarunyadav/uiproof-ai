@@ -405,17 +405,14 @@ class PlaywrightBrowserRunner(BaseBrowserRunner):
         try:
             dims = await page.evaluate("""
                 () => {
-                    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+                    const clientWidth = document.documentElement.clientWidth || (document.body ? document.body.clientWidth : 0);
+                    const vw = clientWidth || window.innerWidth || 0;
                     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
                     const scrollWidth = Math.max(
                         document.documentElement.scrollWidth || 0,
                         document.body ? document.body.scrollWidth : 0
                     );
-                    const clientWidth = Math.max(
-                        document.documentElement.clientWidth || 0,
-                        document.body ? document.body.clientWidth : 0
-                    );
-                    const overflow = Math.max(0, scrollWidth - vw);
+                    const overflow = Math.max(0, scrollWidth - clientWidth);
                     return {
                         viewport_width: vw || """ + str(viewport.width) + """,
                         viewport_height: vh || """ + str(viewport.height) + """,

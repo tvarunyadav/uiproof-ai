@@ -80,6 +80,7 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'audit' | 'compare' | 'prompt'>('audit');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState<number>(2); // Default 100%
+  const [isFitMode, setIsFitMode] = useState<boolean>(true);
 
   // State for real API response data
   const [currentAudit, setCurrentAudit] = useState<AuditResult | null>(null);
@@ -146,19 +147,31 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setSelectedImage(null);
+        setIsFitMode(true);
         setZoomIndex(2);
       } else if (e.key === '+' || e.key === '=') {
-        setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
+        if (isFitMode) {
+          setIsFitMode(false);
+          setZoomIndex(3);
+        } else {
+          setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
+        }
       } else if (e.key === '-') {
-        setZoomIndex((prev) => Math.max(0, prev - 1));
+        if (isFitMode) {
+          setIsFitMode(false);
+          setZoomIndex(1);
+        } else {
+          setZoomIndex((prev) => Math.max(0, prev - 1));
+        }
       } else if (e.key === '0') {
+        setIsFitMode(true);
         setZoomIndex(2);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedImage]);
+  }, [selectedImage, isFitMode]);
 
 
 
@@ -713,55 +726,87 @@ export const App: React.FC = () => {
       {/* Screenshot Lightbox Modal */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-4 md:p-6"
-          onClick={() => setSelectedImage(null)}
+          className="fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center p-3 md:p-6"
+          onClick={() => {
+            setSelectedImage(null);
+            setIsFitMode(true);
+            setZoomIndex(2);
+          }}
         >
           {/* Lightbox Container */}
           <div
-            className="relative max-w-5xl w-full max-h-[90vh] bg-surface-raised border border-border rounded-lg p-3 flex flex-col overflow-hidden shadow-2xl"
+            className="relative max-w-6xl w-full h-[90vh] bg-surface-raised border border-border rounded-xl p-4 flex flex-col overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Floating Zoom Toolbar Header */}
-            <div className="flex items-center justify-between gap-3 pb-3 mb-2 border-b border-border text-xs font-mono">
+            {/* Toolbar Header */}
+            <div className="flex items-center justify-between gap-3 pb-3 mb-2 border-b border-border text-xs font-mono shrink-0">
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setZoomIndex((prev) => Math.max(0, prev - 1))}
-                  disabled={zoomIndex === 0}
-                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1"
+                  onClick={() => {
+                    if (isFitMode) {
+                      setIsFitMode(false);
+                      setZoomIndex(1);
+                    } else {
+                      setZoomIndex((prev) => Math.max(0, prev - 1));
+                    }
+                  }}
+                  disabled={!isFitMode && zoomIndex === 0}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1 cursor-pointer"
                   title="Zoom Out (-)"
                 >
                   <ZoomOut className="w-4 h-4" />
                 </button>
-                <span className="px-2.5 py-1 rounded bg-background border border-border font-bold text-accent min-w-[54px] text-center">
-                  {ZOOM_LEVELS[zoomIndex]}%
+
+                <span className="px-2.5 py-1 rounded bg-background border border-border font-bold text-accent min-w-[85px] text-center">
+                  {isFitMode ? 'Fit to View' : `${ZOOM_LEVELS[zoomIndex]}%`}
                 </span>
+
                 <button
                   type="button"
-                  onClick={() => setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1))}
-                  disabled={zoomIndex === ZOOM_LEVELS.length - 1}
-                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1"
+                  onClick={() => {
+                    if (isFitMode) {
+                      setIsFitMode(false);
+                      setZoomIndex(3);
+                    } else {
+                      setZoomIndex((prev) => Math.min(ZOOM_LEVELS.length - 1, prev + 1));
+                    }
+                  }}
+                  disabled={!isFitMode && zoomIndex === ZOOM_LEVELS.length - 1}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-primary disabled:opacity-40 disabled:hover:bg-surface transition-colors flex items-center gap-1 cursor-pointer"
                   title="Zoom In (+)"
                 >
                   <ZoomIn className="w-4 h-4" />
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setZoomIndex(2)}
-                  className="p-1.5 px-2.5 rounded bg-surface hover:bg-background border border-border text-text-muted hover:text-text-primary transition-colors flex items-center gap-1.5 ml-1"
-                  title="Reset Zoom (0)"
+                  onClick={() => {
+                    setIsFitMode(true);
+                    setZoomIndex(2);
+                  }}
+                  className={`p-1.5 px-2.5 rounded border border-border transition-colors flex items-center gap-1.5 ml-1 cursor-pointer ${
+                    isFitMode
+                      ? 'bg-accent/20 border-accent/40 text-accent font-semibold'
+                      : 'bg-surface hover:bg-background text-text-muted hover:text-text-primary'
+                  }`}
+                  title="Reset to Fit View (0)"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset</span>
+                  <span>Fit / Reset</span>
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-text-muted hidden sm:inline">Use +/-/0 or Esc</span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-text-muted hidden sm:inline font-mono">Shortcuts: +/- to zoom, 0 to fit, Esc to close</span>
                 <button
                   type="button"
-                  onClick={() => setSelectedImage(null)}
-                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-muted hover:text-text-primary transition-colors"
+                  onClick={() => {
+                    setSelectedImage(null);
+                    setIsFitMode(true);
+                    setZoomIndex(2);
+                  }}
+                  className="p-1.5 rounded bg-surface hover:bg-background border border-border text-text-muted hover:text-text-primary transition-colors cursor-pointer"
                   title="Close Lightbox (Esc)"
                 >
                   <X className="w-4 h-4" />
@@ -769,16 +814,26 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Scrollable Image Area */}
-            <div className="overflow-auto flex-1 flex items-center justify-center p-2 min-h-[300px]">
-              <img
-                src={selectedImage}
-                alt="Full Screenshot"
-                className="max-w-none rounded transition-transform duration-150 ease-out origin-top-left"
-                style={{
-                  transform: `scale(${ZOOM_LEVELS[zoomIndex] / 100})`,
-                }}
-              />
+            {/* Image Display Area */}
+            <div className="overflow-auto flex-1 flex items-center justify-center p-3 bg-surface-dark/60 rounded border border-border/60 relative min-h-0">
+              {isFitMode ? (
+                <img
+                  src={selectedImage}
+                  alt="Full Viewport Screenshot Evidence"
+                  className="max-w-full max-h-full w-auto h-auto object-contain mx-auto rounded shadow-lg select-none"
+                />
+              ) : (
+                <div className="inline-block m-auto transition-transform duration-150 ease-out origin-center">
+                  <img
+                    src={selectedImage}
+                    alt="Full Viewport Screenshot Evidence"
+                    className="max-w-none rounded shadow-lg select-none"
+                    style={{
+                      transform: `scale(${ZOOM_LEVELS[zoomIndex] / 100})`,
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
