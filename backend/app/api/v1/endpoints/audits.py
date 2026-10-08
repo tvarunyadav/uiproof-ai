@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -22,6 +22,7 @@ from app.services.auth import get_current_user_dep
 from app.db.models import UserModel
 from app.db.session import get_db
 from app.utils.security import validate_and_sanitize_url
+from app.services.rate_limiter import expensive_op_rate_limiter, check_rate_limit
 from app.config import settings
 
 router = APIRouter()
@@ -49,6 +50,7 @@ async def list_all_audits(
 @router.post("", response_model=AuditResult, status_code=status.HTTP_201_CREATED, tags=["Audits"])
 async def create_audit(
     request: CreateAuditRequest,
+    raw_request: Request,
     current_user: UserModel = Depends(get_current_user_dep),
     db: Session = Depends(get_db)
 ):
@@ -56,7 +58,9 @@ async def create_audit(
     Trigger a new web application quality assurance audit.
     Executes Playwright Chromium, collects browser evidence across viewports, and produces structured issues.
     """
+    check_rate_limit(raw_request, expensive_op_rate_limiter, key_prefix=f"audit:create:{current_user.user_id}")
     # Enforce URL scheme validation & SSRF protection
+
     is_prod = settings.ENVIRONMENT.lower() == "production"
     sanitized_url = validate_and_sanitize_url(
         url=request.url,
@@ -100,6 +104,7 @@ async def get_audit(
 @router.post("/{audit_id}/retest", response_model=RetestAuditResponse, status_code=status.HTTP_201_CREATED, tags=["Audits"])
 async def retest_audit(
     audit_id: str,
+    raw_request: Request,
     current_user: UserModel = Depends(get_current_user_dep),
     db: Session = Depends(get_db)
 ):
@@ -107,7 +112,9 @@ async def retest_audit(
     Re-run Playwright audit using the baseline audit's URL and viewports.
     Returns both the newly generated retest audit and deterministic comparison.
     """
+    check_rate_limit(raw_request, expensive_op_rate_limiter, key_prefix=f"audit:retest:{current_user.user_id}")
     try:
+
         retest_audit_result, comparison = await audit_engine.retest_audit(audit_id, user_id=current_user.user_id, db=db)
         return RetestAuditResponse(
             retest_audit=retest_audit_result,
@@ -252,6 +259,7 @@ async def get_developer_fix_prompt(
 async def analyze_audit_issue(
     audit_id: str,
     issue_id: str,
+    raw_request: Request,
     current_user: UserModel = Depends(get_current_user_dep),
     db: Session = Depends(get_db)
 ):
@@ -259,7 +267,9 @@ async def analyze_audit_issue(
     Analyze an existing verified deterministic issue using the configured AI provider.
     Returns structured AI diagnostics, likely causes, constraints, and fix prompts.
     """
+    check_rate_limit(raw_request, expensive_op_rate_limiter, key_prefix=f"audit:analyze:{current_user.user_id}")
     try:
+
         return await audit_engine.analyze_issue(audit_id=audit_id, issue_id=issue_id, user_id=current_user.user_id, db=db)
     except KeyError as err:
         raise HTTPException(

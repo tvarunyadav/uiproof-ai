@@ -24,8 +24,9 @@ from app.schemas.evidence import (
     DOMMetadataEvidence,
     AccessibilityViolation,
 )
+import urllib.parse
 from app.services.browser.interface import BaseBrowserRunner
-from app.utils.security import validate_and_sanitize_url
+from app.utils.security import validate_and_sanitize_url, is_ip_prohibited, resolve_host_ips
 
 from app.config import settings
 
@@ -243,6 +244,45 @@ class PlaywrightBrowserRunner(BaseBrowserRunner):
 
             context = await browser.new_context(**context_opts)
             page = await context.new_page()
+
+            # Register Playwright SSRF Route Interceptor for redirects & subresources
+            async def _ssrf_route_interceptor(route, req):
+                req_url = req.url
+                try:
+                    parsed = urllib.parse.urlparse(req_url)
+                    scheme = parsed.scheme.lower()
+                    if scheme not in ("http", "https", "data", "blob"):
+                        await route.abort("blockedbyclient")
+                        return
+
+                    hostname = parsed.hostname
+                    if hostname:
+                        hostname_lower = hostname.lower()
+                        is_prod_mode = settings.ENVIRONMENT.lower() == "production"
+
+                        # In production or for metadata IPs, strictly prohibit restricted network targets
+                        if is_prod_mode or hostname_lower in ("169.254.169.254", "0.0.0.0", "::"):
+                            resolved_ips = resolve_host_ips(hostname_lower)
+                            for ip in resolved_ips:
+                                if is_ip_prohibited(ip):
+                                    logger.warning(f"[{viewport.name}_SSRF_BLOCKED] Aborted request to prohibited IP {ip}: {req_url}")
+                                    await route.abort("blockedbyclient")
+                                    return
+                        else:
+                            # In local mode, allow target host itself if localhost/127.0.0.1, but block other private IP targets
+                            resolved_ips = resolve_host_ips(hostname_lower)
+                            for ip in resolved_ips:
+                                is_initial_target_host = hostname_lower in ("localhost", "127.0.0.1", "::1") and initial_url.startswith(("http://localhost", "http://127.0.0.1", "http://::1"))
+                                if is_ip_prohibited(ip) and not is_initial_target_host:
+                                    logger.warning(f"[{viewport.name}_SSRF_BLOCKED] Aborted request to prohibited IP {ip}: {req_url}")
+                                    await route.abort("blockedbyclient")
+                                    return
+                except Exception as route_err:
+                    logger.warning(f"Error evaluating SSRF route {req_url}: {route_err}")
+
+                await route.continue_()
+
+            await context.route("**/*", _ssrf_route_interceptor)
 
             # Register Console Listener
             def on_console(msg: ConsoleMessage):

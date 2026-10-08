@@ -2,7 +2,7 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -24,17 +24,19 @@ from app.services.auth import (
     InvalidTokenError,
     UserNotFoundError,
 )
+from app.services.rate_limiter import auth_rate_limiter, check_rate_limit
 
 logger = logging.getLogger("uiproof.api.auth")
 router = APIRouter()
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED, tags=["Authentication"])
-async def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
+async def register_user(request: RegisterRequest, raw_request: Request, db: Session = Depends(get_db)):
     """
     Register a new user account with email and password.
     Enforces email uniqueness, hashes password, and returns public user profile.
     """
+    check_rate_limit(raw_request, auth_rate_limiter, key_prefix="auth:register")
     email_clean = request.email.strip().lower()
 
     existing = db.query(UserModel).filter_by(email=email_clean).first()
@@ -70,11 +72,12 @@ async def register_user(request: RegisterRequest, db: Session = Depends(get_db))
 
 
 @router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK, tags=["Authentication"])
-async def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+async def login_user(request: LoginRequest, raw_request: Request, db: Session = Depends(get_db)):
     """
     Authenticate user credentials and return a signed JWT access token.
     Uses identical HTTP 401 error response for unknown email vs wrong password to prevent user enumeration.
     """
+    check_rate_limit(raw_request, auth_rate_limiter, key_prefix="auth:login")
     email_clean = request.email.strip().lower()
 
     user = db.query(UserModel).filter_by(email=email_clean).first()
