@@ -10,6 +10,8 @@ from app.db.models import ProjectModel, AuditModel, IssueModel
 from app.schemas.project import Project, CreateProjectRequest, AuditSummaryItem
 from app.schemas.audit import AuditStatus
 
+from sqlalchemy.exc import IntegrityError
+
 logger = logging.getLogger("uiproof.service.project")
 
 DEFAULT_PROJECT_ID = "proj_default"
@@ -22,18 +24,26 @@ class ProjectService:
     Service responsible for Project CRUD operations and Audit History listings.
     """
 
-    def get_or_create_default_project(self, db: Session) -> ProjectModel:
-        project = db.query(ProjectModel).filter_by(project_id=DEFAULT_PROJECT_ID).first()
+    def get_or_create_default_project(self, db: Session, user_id: Optional[str] = None) -> ProjectModel:
+        default_proj_id = f"proj_default_{user_id}" if user_id else DEFAULT_PROJECT_ID
+        project = db.query(ProjectModel).filter_by(project_id=default_proj_id).first()
+        if not project and user_id:
+            project = db.query(ProjectModel).filter_by(user_id=user_id, name=DEFAULT_PROJECT_NAME).first()
         if not project:
             project = ProjectModel(
-                project_id=DEFAULT_PROJECT_ID,
+                project_id=default_proj_id,
+                user_id=user_id,
                 name=DEFAULT_PROJECT_NAME,
                 target_url=DEFAULT_PROJECT_URL,
                 created_at=datetime.now(timezone.utc)
             )
-            db.add(project)
-            db.commit()
-            db.refresh(project)
+            try:
+                db.add(project)
+                db.commit()
+                db.refresh(project)
+            except IntegrityError:
+                db.rollback()
+                project = db.query(ProjectModel).filter_by(project_id=default_proj_id).first()
         return project
 
     def create_project(self, request: CreateProjectRequest, user_id: Optional[str] = None, db: Optional[Session] = None) -> Project:
@@ -73,22 +83,19 @@ class ProjectService:
             close_db = True
 
         try:
-            if project_id == DEFAULT_PROJECT_ID:
-                project_model = self.get_or_create_default_project(db)
+            if project_id == DEFAULT_PROJECT_ID or (user_id and project_id == f"proj_default_{user_id}"):
+                project_model = self.get_or_create_default_project(db, user_id=user_id)
             else:
                 project_model = db.query(ProjectModel).filter_by(project_id=project_id).first()
 
             if not project_model:
                 return None
 
-            # Ownership check: If project belongs to another user, return None (404)
-            if project_model.user_id and user_id and project_model.user_id != user_id:
-                return None
+            if user_id is not None:
+                if project_model.user_id != user_id:
+                    return None
 
             audit_count = db.query(AuditModel).filter_by(project_id=project_model.project_id).count()
-            if project_id == DEFAULT_PROJECT_ID:
-                null_count = db.query(AuditModel).filter(AuditModel.project_id.is_(None)).count()
-                audit_count += null_count
 
             created_at = project_model.created_at
             if created_at and created_at.tzinfo is None:
@@ -114,15 +121,13 @@ class ProjectService:
         try:
             projects_data: List[Project] = []
             query = db.query(ProjectModel)
-            if user_id:
-                query = query.filter((ProjectModel.user_id == user_id) | (ProjectModel.user_id.is_(None)))
+            if user_id is not None:
+                query = query.filter(ProjectModel.user_id == user_id)
+
             db_projects = query.order_by(ProjectModel.created_at.desc()).all()
 
             for p in db_projects:
                 audit_count = db.query(AuditModel).filter_by(project_id=p.project_id).count()
-                if p.project_id == DEFAULT_PROJECT_ID:
-                    null_count = db.query(AuditModel).filter(AuditModel.project_id.is_(None)).count()
-                    audit_count += null_count
 
                 created_at = p.created_at
                 if created_at and created_at.tzinfo is None:
@@ -135,26 +140,6 @@ class ProjectService:
                         target_url=p.target_url,
                         created_at=created_at,
                         audit_count=audit_count
-                    )
-                )
-
-            # Check if there are legacy unassigned audits (project_id IS NULL) and default project not yet in list
-            unassigned_count = db.query(AuditModel).filter(AuditModel.project_id.is_(None)).count()
-            has_default_in_list = any(p.project_id == DEFAULT_PROJECT_ID for p in projects_data)
-
-            if unassigned_count > 0 and not has_default_in_list:
-                def_proj = self.get_or_create_default_project(db)
-                total_def_count = db.query(AuditModel).filter(AuditModel.project_id == DEFAULT_PROJECT_ID).count() + unassigned_count
-                created_at = def_proj.created_at
-                if created_at and created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
-                projects_data.append(
-                    Project(
-                        project_id=def_proj.project_id,
-                        name=def_proj.name,
-                        target_url=def_proj.target_url,
-                        created_at=created_at,
-                        audit_count=total_def_count
                     )
                 )
 
@@ -208,25 +193,18 @@ class ProjectService:
             close_db = True
 
         try:
-            # Authorize project first
-            proj = self.get_project(project_id, user_id=user_id, db=db)
-            if not proj:
-                return None
+            if user_id is not None:
+                # Authorize project first
+                proj = self.get_project(project_id, user_id=user_id, db=db)
+                if not proj:
+                    return None
 
-            if project_id == DEFAULT_PROJECT_ID:
-                audit_models = (
-                    db.query(AuditModel)
-                    .filter((AuditModel.project_id == DEFAULT_PROJECT_ID) | (AuditModel.project_id.is_(None)))
-                    .order_by(AuditModel.created_at.desc())
-                    .all()
-                )
-            else:
-                audit_models = (
-                    db.query(AuditModel)
-                    .filter_by(project_id=project_id)
-                    .order_by(AuditModel.created_at.desc())
-                    .all()
-                )
+            audit_models = (
+                db.query(AuditModel)
+                .filter(AuditModel.project_id == project_id)
+                .order_by(AuditModel.created_at.desc())
+                .all()
+            )
 
             return [self._convert_audit_to_summary(a) for a in audit_models]
         finally:
@@ -240,15 +218,11 @@ class ProjectService:
             close_db = True
 
         try:
-            if user_id:
+            if user_id is not None:
                 audit_models = (
                     db.query(AuditModel)
-                    .outerjoin(ProjectModel, AuditModel.project_id == ProjectModel.project_id)
-                    .filter(
-                        (ProjectModel.user_id == user_id) |
-                        (ProjectModel.user_id.is_(None)) |
-                        (AuditModel.project_id.is_(None))
-                    )
+                    .join(ProjectModel, AuditModel.project_id == ProjectModel.project_id)
+                    .filter(ProjectModel.user_id == user_id)
                     .order_by(AuditModel.created_at.desc())
                     .all()
                 )

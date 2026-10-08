@@ -234,7 +234,18 @@ async def get_developer_fix_prompt(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Audit with ID '{audit_id}' not found."
         )
-    return await audit_engine.ai_provider.generate_fix_prompt(audit_id, audit.issues)
+    try:
+        return await audit_engine.ai_provider.generate_fix_prompt(audit_id, audit.issues)
+    except AINotConfiguredError as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "AI_NOT_CONFIGURED", "message": str(err)}
+        )
+    except AIProviderError as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "AI_PROVIDER_ERROR", "message": str(err)}
+        )
 
 
 @router.post("/{audit_id}/issues/{issue_id}/analyze", response_model=IssueAnalysisResponse, tags=["AI Analysis"])

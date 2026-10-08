@@ -106,7 +106,9 @@ async def test_retest_endpoint_success_and_comparison(db_session):
             stats=AuditSummaryStats(total_issues=2)
         )
 
-        audit_engine._save_audit_to_db(baseline_result, db=db_session)
+        from app.services.project import project_service
+        proj = project_service.get_or_create_default_project(db_session, user_id=user.user_id)
+        audit_engine._save_audit_to_db(baseline_result, project_id=proj.project_id, db=db_session)
 
         # Mock browser evidence collection for retest run
         retest_issue_new = Issue(

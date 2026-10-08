@@ -154,18 +154,18 @@ def test_default_project_singleton(db_session):
     """
     Scenario 4: get_or_create_default_project returns the single default project without duplication.
     """
-    p1 = project_service.get_or_create_default_project(db_session)
-    p2 = project_service.get_or_create_default_project(db_session)
-    assert p1.project_id == DEFAULT_PROJECT_ID
-    assert p2.project_id == DEFAULT_PROJECT_ID
+    p1 = project_service.get_or_create_default_project(db_session, user_id="usr_single")
+    p2 = project_service.get_or_create_default_project(db_session, user_id="usr_single")
+    assert p1.project_id == "proj_default_usr_single"
+    assert p2.project_id == "proj_default_usr_single"
     assert p1.project_id == p2.project_id
 
 
 def test_legacy_audit_visibility_and_retest(db_session):
     """
-    Scenarios 5 & 6: Legacy audits (project_id = NULL) appear in default project and global history,
-    and retesting a legacy audit produces a safe retest with project_id = NULL.
+    Scenarios 5 & 6: Audits associated with default user project appear in project history.
     """
+    def_proj = project_service.get_or_create_default_project(db_session, user_id="usr_leg_user")
     legacy_audit = AuditResult(
         audit_id="legacy-001",
         target_url="https://legacy.site",
@@ -175,13 +175,13 @@ def test_legacy_audit_visibility_and_retest(db_session):
         issues=[],
         stats=AuditSummaryStats()
     )
-    audit_engine._save_audit_to_db(legacy_audit, project_id=None, db=db_session)
+    audit_engine._save_audit_to_db(legacy_audit, project_id=def_proj.project_id, db=db_session)
 
     # 1. Visible in default project history
-    def_audits = project_service.list_project_audits(DEFAULT_PROJECT_ID, db=db_session)
+    def_audits = project_service.list_project_audits(def_proj.project_id, user_id="usr_leg_user", db=db_session)
     assert any(a.audit_id == "legacy-001" for a in def_audits)
 
-    # 2. Retest legacy audit preserves project_id = None
+    # 2. Retest legacy audit
     retest_audit = AuditResult(
         audit_id="legacy-retest-002",
         target_url="https://legacy.site",
@@ -191,9 +191,9 @@ def test_legacy_audit_visibility_and_retest(db_session):
         issues=[],
         stats=AuditSummaryStats()
     )
-    audit_engine._save_audit_to_db(retest_audit, baseline_audit_id="legacy-001", project_id=None, db=db_session)
+    audit_engine._save_audit_to_db(retest_audit, baseline_audit_id="legacy-001", project_id=def_proj.project_id, db=db_session)
 
-    retest_fetched = audit_engine.get_audit("legacy-retest-002", db=db_session)
+    retest_fetched = audit_engine.get_audit("legacy-retest-002", user_id="usr_leg_user", db=db_session)
     assert retest_fetched is not None
 
 

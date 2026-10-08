@@ -151,8 +151,9 @@ async def test_retest_inherits_project_id(db_session):
 
 def test_legacy_unassigned_audits(db_session):
     """
-    Test 12: Unassigned legacy audits (project_id = NULL) remain accessible under Default Project.
+    Test 12: Legacy audits attached to a default project remain accessible to the project owner.
     """
+    proj = project_service.get_or_create_default_project(db_session, user_id="usr_legacy_owner")
     legacy_audit = AuditResult(
         audit_id="legacy-audit-000",
         target_url="https://legacy.com",
@@ -163,12 +164,12 @@ def test_legacy_unassigned_audits(db_session):
         findings=[],
         stats=AuditSummaryStats()
     )
-    audit_engine._save_audit_to_db(legacy_audit, project_id=None, db=db_session)
+    audit_engine._save_audit_to_db(legacy_audit, project_id=proj.project_id, db=db_session)
 
-    projects = project_service.list_projects(db=db_session)
-    assert any(p.project_id == "proj_default" for p in projects)
+    projects = project_service.list_projects(user_id="usr_legacy_owner", db=db_session)
+    assert any(p.project_id == proj.project_id for p in projects)
 
-    default_audits = project_service.list_project_audits("proj_default", db=db_session)
+    default_audits = project_service.list_project_audits(proj.project_id, user_id="usr_legacy_owner", db=db_session)
     assert any(a.audit_id == "legacy-audit-000" for a in default_audits)
 
 

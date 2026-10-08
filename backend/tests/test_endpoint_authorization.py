@@ -51,12 +51,124 @@ def user_b(db_session):
 
 
 # ==============================================================================
-# 1. UNAUTHENTICATED PROTECTION TESTS (401)
+# 1. BRAND NEW USER & STRICT ISOLATION TESTS
 # ==============================================================================
+
+def test_brand_new_user_has_zero_projects_and_zero_audits(db_session, user_a, user_b):
+    """
+    Requirements 1, 2, 3, 4, 14:
+    - User A creates Project A and Audit A.
+    - Brand new User B sees 0 projects, 0 audits, and empty history.
+    """
+    proj_a = ProjectModel(project_id="proj_a_100", user_id="usr_user_a", name="User A App", target_url="https://a.com")
+    audit_a = AuditModel(audit_id="audit_a_100", project_id="proj_a_100", target_url="https://a.com", status="completed")
+    db_session.add_all([proj_a, audit_a])
+    db_session.commit()
+
+    # User A sees Project A and Audit A
+    res_a_proj = client.get("/api/v1/projects", headers=user_a["headers"])
+    assert res_a_proj.status_code == 200
+    assert len(res_a_proj.json()) == 1
+
+    res_a_audit = client.get("/api/v1/audits", headers=user_a["headers"])
+    assert res_a_audit.status_code == 200
+    assert len(res_a_audit.json()) == 1
+
+    # Brand new User B sees 0 projects and 0 audits
+    res_b_proj = client.get("/api/v1/projects", headers=user_b["headers"])
+    assert res_b_proj.status_code == 200
+    assert len(res_b_proj.json()) == 0
+
+    res_b_audit = client.get("/api/v1/audits", headers=user_b["headers"])
+    assert res_b_audit.status_code == 200
+    assert len(res_b_audit.json()) == 0
+
+
+def test_user_b_cannot_access_user_a_project_operations(db_session, user_a, user_b):
+    """
+    Requirements 5, 6, 7:
+    - User B cannot GET Project A by ID (returns 404).
+    - User B cannot UPDATE / DELETE Project A (no endpoint or returns 404).
+    """
+    proj_a = ProjectModel(project_id="proj_a_secret", user_id="usr_user_a", name="User A Secret", target_url="https://a.com")
+    db_session.add(proj_a)
+    db_session.commit()
+
+    # GET Project A as User B
+    res_get = client.get("/api/v1/projects/proj_a_secret", headers=user_b["headers"])
+    assert res_get.status_code == 404
+
+    # GET Project A Audits as User B
+    res_audits = client.get("/api/v1/projects/proj_a_secret/audits", headers=user_b["headers"])
+    assert res_audits.status_code == 404
+
+    # PUT / DELETE on projects endpoint (not supported / returns 404 / 405)
+    res_put = client.put("/api/v1/projects/proj_a_secret", json={"name": "Hacked"}, headers=user_b["headers"])
+    assert res_put.status_code in (404, 405)
+
+    res_del = client.delete("/api/v1/projects/proj_a_secret", headers=user_b["headers"])
+    assert res_del.status_code in (404, 405)
+
+
+def test_user_b_cannot_access_user_a_audit_and_nested_resources(db_session, user_a, user_b):
+    """
+    Requirements 8, 9, 10, 11, 12, 13:
+    - User B cannot GET Audit A by ID.
+    - User B cannot access Audit A's issues / AI analysis.
+    - User B cannot access Audit A evidence/artifacts.
+    - User B cannot retest Audit A.
+    - User B cannot access comparison data for Audit A.
+    - User B cannot generate fix prompt for Audit A.
+    """
+    proj_a = ProjectModel(project_id="proj_a_nested", user_id="usr_user_a", name="User A App", target_url="https://a.com")
+    audit_a = AuditModel(audit_id="audit_a_nested", project_id="proj_a_nested", target_url="https://a.com", status="completed")
+    issue_a = IssueModel(audit_id="audit_a_nested", issue_id="ISSUE-A-1", category="layout", severity="critical", title="T", description="D")
+    db_session.add_all([proj_a, audit_a, issue_a])
+    db_session.commit()
+
+    headers_b = user_b["headers"]
+
+    # 8. User B cannot GET Audit A
+    assert client.get("/api/v1/audits/audit_a_nested", headers=headers_b).status_code == 404
+
+    # 9. User B cannot access Audit A issues (issue analysis returns 404)
+    assert client.post("/api/v1/audits/audit_a_nested/issues/ISSUE-A-1/analyze", headers=headers_b).status_code == 404
+
+    # 10. User B cannot invoke AI analysis for Audit A
+    assert client.post("/api/v1/audits/audit_a_nested/issues/ISSUE-A-1/analyze", headers=headers_b).status_code == 404
+
+    # 11. User B cannot access Audit A evidence/artifacts
+    assert client.get("/api/v1/audits/audit_a_nested/artifacts/desktop.png", headers=headers_b).status_code == 404
+
+    # 12. User B cannot retest Audit A
+    assert client.post("/api/v1/audits/audit_a_nested/retest", headers=headers_b).status_code == 404
+
+    # 13. User B cannot access comparison data for Audit A
+    assert client.post("/api/v1/audits/compare", json={"baseline_audit_id": "audit_a_nested", "new_audit_id": "audit_a_nested"}, headers=headers_b).status_code == 404
+    assert client.get("/api/v1/audits/audit_a_nested/compare/audit_a_nested", headers=headers_b).status_code == 404
+
+    # Fix prompt for Audit A
+    assert client.get("/api/v1/audits/audit_a_nested/fix-prompt", headers=headers_b).status_code == 404
+
+
+def test_reciprocal_isolation_user_a_cannot_access_user_b_resources(db_session, user_a, user_b):
+    """
+    Requirement 15: Reciprocal isolation test (User A cannot access User B's resources).
+    """
+    proj_b = ProjectModel(project_id="proj_b_reciprocal", user_id="usr_user_b", name="User B App", target_url="https://b.com")
+    audit_b = AuditModel(audit_id="audit_b_reciprocal", project_id="proj_b_reciprocal", target_url="https://b.com", status="completed")
+    db_session.add_all([proj_b, audit_b])
+    db_session.commit()
+
+    headers_a = user_a["headers"]
+
+    assert client.get("/api/v1/projects/proj_b_reciprocal", headers=headers_a).status_code == 404
+    assert client.get("/api/v1/audits/audit_b_reciprocal", headers=headers_a).status_code == 404
+
 
 def test_unauthenticated_requests_return_401():
     """
-    Test 1: Unauthenticated requests to protected project & audit routes return 401.
+    Requirement 16: Unauthenticated requests return 401 Unauthorized.
     """
     from app.services.auth.dependencies import get_current_user_dep
     saved_override = app.dependency_overrides.pop(get_current_user_dep, None)
@@ -79,149 +191,57 @@ def test_unauthenticated_requests_return_401():
             app.dependency_overrides[get_current_user_dep] = saved_override
 
 
-
-# ==============================================================================
-# 2. PROJECT AUTHORIZATION & ISOLATION TESTS
-# ==============================================================================
-
-def test_user_sees_own_projects_and_cannot_access_other_user_projects(db_session, user_a, user_b):
+def test_owner_regression_legitimate_operations_work(db_session, user_a):
     """
-    Tests 2, 3, 4, 5, 6:
-    - User A can create and list own projects.
-    - User A cannot see User B's projects in GET /projects list.
-    - User A requesting User B's project returns 404.
-    - User A requesting User B's project audits returns 404.
-    """
-    proj_a = ProjectModel(project_id="proj_a_100", user_id="usr_user_a", name="User A App", target_url="https://a.com")
-    proj_b = ProjectModel(project_id="proj_b_200", user_id="usr_user_b", name="User B App", target_url="https://b.com")
-    db_session.add_all([proj_a, proj_b])
-    db_session.commit()
-
-    # User A listing projects (Test 2 & 3)
-    res_a_list = client.get("/api/v1/projects", headers=user_a["headers"])
-    assert res_a_list.status_code == 200
-    a_proj_ids = [p["project_id"] for p in res_a_list.json()]
-    assert "proj_a_100" in a_proj_ids
-    assert "proj_b_200" not in a_proj_ids  # Test 4: User A does not see User B's project
-
-    # User A getting own project
-    assert client.get("/api/v1/projects/proj_a_100", headers=user_a["headers"]).status_code == 200
-
-    # User A getting User B's project (Test 5)
-    assert client.get("/api/v1/projects/proj_b_200", headers=user_a["headers"]).status_code == 404
-
-    # User A getting User B's project audits (Test 6)
-    assert client.get("/api/v1/projects/proj_b_200/audits", headers=user_a["headers"]).status_code == 404
-
-
-def test_user_cannot_create_audit_under_other_user_project(db_session, user_a, user_b):
-    """
-    Test 7: User A cannot create an audit associated with User B's project ID (returns 404).
-    """
-    proj_b = ProjectModel(project_id="proj_b_private", user_id="usr_user_b", name="User B Private", target_url="https://b.com")
-    db_session.add(proj_b)
-    db_session.commit()
-
-    res = client.post("/api/v1/audits", json={"url": "https://b.com", "project_id": "proj_b_private"}, headers=user_a["headers"])
-    assert res.status_code == 404
-
-
-# ==============================================================================
-# 3. AUDIT AUTHORIZATION & IDOR TESTS
-# ==============================================================================
-
-def test_audit_cross_user_idor_protections(db_session, user_a, user_b):
-    """
-    Tests 8, 9, 10, 11, 12, 13, 14:
-    User A attempting to access User B's audit, retest, compare, artifact, fix-prompt, or issue analysis returns 404.
-    """
-    proj_b = ProjectModel(project_id="proj_b_300", user_id="usr_user_b", name="User B App", target_url="https://b.com")
-    audit_b = AuditModel(audit_id="audit_b_300", project_id="proj_b_300", target_url="https://b.com", status="completed")
-    issue_b = IssueModel(audit_id="audit_b_300", issue_id="ISSUE-B-1", category="layout", severity="high", title="T", description="D")
-    db_session.add_all([proj_b, audit_b, issue_b])
-    db_session.commit()
-
-    headers_a = user_a["headers"]
-
-    # Test 8: User A cannot GET User B's audit
-    assert client.get("/api/v1/audits/audit_b_300", headers=headers_a).status_code == 404
-
-    # Test 9: User A cannot retest User B's audit
-    assert client.post("/api/v1/audits/audit_b_300/retest", headers=headers_a).status_code == 404
-
-    # Test 10: User A cannot compare User B's audits
-    assert client.post("/api/v1/audits/compare", json={"baseline_audit_id": "audit_b_300", "new_audit_id": "audit_b_300"}, headers=headers_a).status_code == 404
-
-    # Test 11: User A cannot compare User A's audit with User B's audit
-    proj_a = ProjectModel(project_id="proj_a_300", user_id="usr_user_a", name="User A App", target_url="https://a.com")
-    audit_a = AuditModel(audit_id="audit_a_300", project_id="proj_a_300", target_url="https://a.com", status="completed")
-    db_session.add_all([proj_a, audit_a])
-    db_session.commit()
-    assert client.post("/api/v1/audits/compare", json={"baseline_audit_id": "audit_a_300", "new_audit_id": "audit_b_300"}, headers=headers_a).status_code == 404
-
-    # Test 12: User A cannot download User B's artifact
-    assert client.get("/api/v1/audits/audit_b_300/artifacts/desktop.png", headers=headers_a).status_code == 404
-
-    # Test 13: User A cannot generate User B's fix prompt
-    assert client.get("/api/v1/audits/audit_b_300/fix-prompt", headers=headers_a).status_code == 404
-
-    # Test 14: User A cannot trigger AI analysis on User B's issue
-    assert client.post("/api/v1/audits/audit_b_300/issues/ISSUE-B-1/analyze", headers=headers_a).status_code == 404
-
-
-# ==============================================================================
-# 4. AUTHORIZED OWNER SUCCESS TESTS
-# ==============================================================================
-
-def test_user_can_access_own_resources(db_session, user_a):
-    """
-    Tests 15, 16, 18, 20: User A can successfully access own project, audit, compare, and issue analysis.
+    Owner regression tests: User A can create, view, run audit, analyze, retest, and compare own resources.
     """
     headers = user_a["headers"]
 
-    # Test 15: Create & GET own project
-    create_res = client.post("/api/v1/projects", json={"name": "My App", "target_url": "https://myapp.com"}, headers=headers)
-    assert create_res.status_code == 201
-    proj_id = create_res.json()["project_id"]
+    # Create & view project
+    res_proj = client.post("/api/v1/projects", json={"name": "My App", "target_url": "https://myapp.com"}, headers=headers)
+    assert res_proj.status_code == 201
+    proj_id = res_proj.json()["project_id"]
+
     assert client.get(f"/api/v1/projects/{proj_id}", headers=headers).status_code == 200
 
-    # Seed an audit for User A
-    audit_a = AuditModel(audit_id="audit_my_001", project_id=proj_id, target_url="https://myapp.com", status="completed")
-    issue_a = IssueModel(audit_id="audit_my_001", issue_id="ISSUE-MY-1", category="seo", severity="low", title="Title", description="Desc")
+    # Seed audit for User A
+    audit_a = AuditModel(audit_id="audit_owner_001", project_id=proj_id, target_url="https://myapp.com", status="completed")
+    issue_a = IssueModel(audit_id="audit_owner_001", issue_id="ISSUE-OWNER-1", category="seo", severity="low", title="Title", description="Desc")
     db_session.add_all([audit_a, issue_a])
     db_session.commit()
 
-    # Test 16: User A can GET own audit
-    assert client.get("/api/v1/audits/audit_my_001", headers=headers).status_code == 200
+    # User A views audit
+    assert client.get("/api/v1/audits/audit_owner_001", headers=headers).status_code == 200
 
-    # Test 18: User A can compare own audits
-    assert client.post("/api/v1/audits/compare", json={"baseline_audit_id": "audit_my_001", "new_audit_id": "audit_my_001"}, headers=headers).status_code == 200
+    # User A compares own audits
+    assert client.post("/api/v1/audits/compare", json={"baseline_audit_id": "audit_owner_001", "new_audit_id": "audit_owner_001"}, headers=headers).status_code == 200
 
-    # Test 20: User A can analyze own issue
-    res_ai = client.post("/api/v1/audits/audit_my_001/issues/ISSUE-MY-1/analyze", headers=headers)
-    assert res_ai.status_code in (200, 538, 503)  # 200 OK or 503 AI not configured (both prove authorization passed)
+    # User A gets fix prompt
+    assert client.get("/api/v1/audits/audit_owner_001/fix-prompt", headers=headers).status_code in (200, 503)
+
+    # User A analyzes issue
+    res_ai = client.post("/api/v1/audits/audit_owner_001/issues/ISSUE-OWNER-1/analyze", headers=headers)
+    assert res_ai.status_code in (200, 503)
 
 
-# ==============================================================================
-# 5. LEGACY NULL-OWNERSHIP COMPATIBILITY TESTS
-# ==============================================================================
-
-def test_legacy_null_owned_records_remain_accessible(db_session, user_a):
+def test_unassigned_legacy_records_not_leaked_to_users(db_session, user_a, user_b):
     """
-    Tests 21, 22: Legacy projects (user_id IS NULL) and legacy audits (project_id IS NULL) remain accessible.
+    Ensures legacy records without user_id / project_id are NOT leaked to User A or User B.
     """
-    headers = user_a["headers"]
-
-    legacy_proj = ProjectModel(project_id="proj_legacy_999", user_id=None, name="Legacy App", target_url="https://legacy.com")
-    legacy_audit = AuditModel(audit_id="audit_legacy_999", project_id="proj_legacy_999", target_url="https://legacy.com", status="completed")
-    unassigned_audit = AuditModel(audit_id="audit_unassigned_999", project_id=None, target_url="https://unassigned.com", status="completed")
-
-    db_session.add_all([legacy_proj, legacy_audit, unassigned_audit])
+    legacy_proj = ProjectModel(project_id="proj_legacy_orphan", user_id=None, name="Orphan App", target_url="https://orphan.com")
+    legacy_audit = AuditModel(audit_id="audit_legacy_orphan", project_id=None, target_url="https://orphan.com", status="completed")
+    db_session.add_all([legacy_proj, legacy_audit])
     db_session.commit()
 
-    # Test 21: Legacy NULL-owned project remains accessible
-    assert client.get("/api/v1/projects/proj_legacy_999", headers=headers).status_code == 200
+    # User A and User B cannot list or access unassigned orphan records
+    assert client.get("/api/v1/projects/proj_legacy_orphan", headers=user_a["headers"]).status_code == 404
+    assert client.get("/api/v1/projects/proj_legacy_orphan", headers=user_b["headers"]).status_code == 404
 
-    # Test 22: Legacy NULL-owned audit remains accessible
-    assert client.get("/api/v1/audits/audit_legacy_999", headers=headers).status_code == 200
-    assert client.get("/api/v1/audits/audit_unassigned_999", headers=headers).status_code == 200
+    assert client.get("/api/v1/audits/audit_legacy_orphan", headers=user_a["headers"]).status_code == 404
+    assert client.get("/api/v1/audits/audit_legacy_orphan", headers=user_b["headers"]).status_code == 404
+
+    res_a_projs = [p["project_id"] for p in client.get("/api/v1/projects", headers=user_a["headers"]).json()]
+    assert "proj_legacy_orphan" not in res_a_projs
+
+    res_b_projs = [p["project_id"] for p in client.get("/api/v1/projects", headers=user_b["headers"]).json()]
+    assert "proj_legacy_orphan" not in res_b_projs

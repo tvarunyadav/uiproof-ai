@@ -12,7 +12,7 @@ from app.services.ai.openai_provider import OpenAILLMProvider
 
 import uuid
 
-def setup_sample_audit(db=None):
+def setup_sample_audit(db=None, user_id=None):
     """Helper to populate in-memory audit DB with a sample audit and deterministic issue."""
     audit_id = f"test-audit-ai-{uuid.uuid4().hex[:8]}"
     issue = Issue(
@@ -48,7 +48,9 @@ def setup_sample_audit(db=None):
     )
     audit_engine._audits_db[audit_id] = audit
     if db:
-        audit_engine._save_audit_to_db(audit, db=db)
+        from app.services.project import project_service
+        proj = project_service.get_or_create_default_project(db, user_id=user_id)
+        audit_engine._save_audit_to_db(audit, project_id=proj.project_id, db=db)
     return audit_id, issue.issue_id
 
 
@@ -63,7 +65,7 @@ async def test_ai_analysis_missing_api_key(async_client, db_session):
     token = create_access_token(user.user_id, user.email)
     headers = {"Authorization": f"Bearer {token}"}
 
-    audit_id, issue_id = setup_sample_audit(db=db_session)
+    audit_id, issue_id = setup_sample_audit(db=db_session, user_id=user.user_id)
     with patch.object(audit_engine.ai_provider, "analyze_issue", side_effect=AINotConfiguredError("AI API key is not configured.")):
         res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze", headers=headers)
         assert res.status_code == 503
@@ -82,7 +84,7 @@ async def test_ai_analysis_provider_error(async_client, db_session):
     token = create_access_token(user.user_id, user.email)
     headers = {"Authorization": f"Bearer {token}"}
 
-    audit_id, issue_id = setup_sample_audit(db=db_session)
+    audit_id, issue_id = setup_sample_audit(db=db_session, user_id=user.user_id)
     with patch.object(audit_engine.ai_provider, "analyze_issue", side_effect=AIProviderError("LLM Provider connection timeout")):
         res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/{issue_id}/analyze", headers=headers)
         assert res.status_code == 503
@@ -115,7 +117,7 @@ async def test_ai_analysis_unknown_issue(async_client, db_session):
     token = create_access_token(user.user_id, user.email)
     headers = {"Authorization": f"Bearer {token}"}
 
-    audit_id, _ = setup_sample_audit(db=db_session)
+    audit_id, _ = setup_sample_audit(db=db_session, user_id=user.user_id)
     res = await async_client.post(f"/api/v1/audits/{audit_id}/issues/NONEXISTENT-ISSUE-ID/analyze", headers=headers)
     assert res.status_code == 404
 
@@ -130,7 +132,7 @@ async def test_ai_analysis_success_mocked_provider(async_client, db_session):
     token = create_access_token(user.user_id, user.email)
     headers = {"Authorization": f"Bearer {token}"}
 
-    audit_id, issue_id = setup_sample_audit(db=db_session)
+    audit_id, issue_id = setup_sample_audit(db=db_session, user_id=user.user_id)
 
     mock_analysis = AIAnalysisDetails(
         summary="Horizontal overflow on mobile caused by fixed width element exceeding 390px viewport width.",

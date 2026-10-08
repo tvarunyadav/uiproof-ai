@@ -361,10 +361,11 @@ class AuditEngineService:
         try:
             audit_model = db.query(AuditModel).filter_by(audit_id=audit_id).first()
             if audit_model:
-                # Ownership check: If audit belongs to a project owned by another user, return None (404)
-                if audit_model.project_id and user_id:
+                if user_id is not None:
+                    if not audit_model.project_id:
+                        return None
                     proj = db.query(ProjectModel).filter_by(project_id=audit_model.project_id).first()
-                    if proj and proj.user_id and proj.user_id != user_id:
+                    if not proj or proj.user_id != user_id:
                         return None
 
                 issues = []
@@ -551,6 +552,9 @@ class AuditEngineService:
         )
 
     async def create_audit(self, request: CreateAuditRequest, user_id: Optional[str] = None, db: Optional[Session] = None) -> AuditResult:
+        if not user_id:
+            raise KeyError("Authenticated user ID required.")
+
         # Validate target URL and audit mode
         is_prod = settings.ENVIRONMENT.lower() == "production"
         validated_url = validate_and_sanitize_url(
@@ -562,11 +566,14 @@ class AuditEngineService:
         audit_mode = request.mode or "remote"
 
         # Verify target project ownership if project_id is specified
+        from app.services.project import project_service
         if request.project_id:
-            from app.services.project import project_service
             proj = project_service.get_project(request.project_id, user_id=user_id, db=db)
             if not proj:
                 raise KeyError(f"Project with ID '{request.project_id}' not found.")
+        else:
+            default_proj = project_service.get_or_create_default_project(user_id=user_id, db=db)
+            request.project_id = default_proj.project_id
 
         audit_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc)

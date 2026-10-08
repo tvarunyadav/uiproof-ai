@@ -47,7 +47,9 @@ async def test_retest_without_audits_db_cache(db_session):
     )
 
     # 1. Persist baseline to DB
-    audit_engine._save_audit_to_db(baseline_audit, db=db_session)
+    from app.services.project import project_service
+    proj = project_service.get_or_create_default_project(db_session, user_id="usr_retest_persist")
+    audit_engine._save_audit_to_db(baseline_audit, project_id=proj.project_id, db=db_session)
 
     # 2. Clear in-memory state
     audit_engine._audits_db.clear()
@@ -74,7 +76,7 @@ async def test_retest_without_audits_db_cache(db_session):
          patch("app.services.audit.create_deterministic_findings", return_value=[issue_baseline, issue_retest_new]):
         mock_collect.return_value = mock_retest_evidence
 
-        retest_result, comparison = await audit_engine.retest_audit("baseline-db-999", db=db_session)
+        retest_result, comparison = await audit_engine.retest_audit("baseline-db-999", user_id="usr_retest_persist", db=db_session)
 
         assert retest_result is not None
         assert retest_result.target_url == "https://retest-site.org"
@@ -143,7 +145,9 @@ async def test_comparison_without_audits_db_cache(db_session):
         findings=[issue_a, issue_b],
         stats=AuditSummaryStats(total_issues=2)
     )
-    audit_engine._save_audit_to_db(baseline_audit, db=db_session)
+    from app.services.project import project_service
+    proj = project_service.get_or_create_default_project(db_session, user_id="usr_comp_persist")
+    audit_engine._save_audit_to_db(baseline_audit, project_id=proj.project_id, db=db_session)
 
     retest_audit = AuditResult(
         audit_id="retest-comp-002",
@@ -155,7 +159,7 @@ async def test_comparison_without_audits_db_cache(db_session):
         findings=[issue_b, issue_c],
         stats=AuditSummaryStats(total_issues=2)
     )
-    audit_engine._save_audit_to_db(retest_audit, baseline_audit_id="baseline-comp-001", db=db_session)
+    audit_engine._save_audit_to_db(retest_audit, baseline_audit_id="baseline-comp-001", project_id=proj.project_id, db=db_session)
 
     # CLEAR IN-MEMORY DICTIONARY
     audit_engine._audits_db.clear()
